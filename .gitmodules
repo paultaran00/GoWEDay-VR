@@ -1,0 +1,4 @@
+[submodule "src/UEVR"]
+	path = src/UEVR
+	url = https://github.com/paultaran00/UEVR.git
+	branch = eday

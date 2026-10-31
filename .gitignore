@@ -1,0 +1,15 @@
+build/
+UEVR/
+logs/
+release/
+__pycache__/
+.vscode/
+*.obj
+*.lib
+*.exp
+*.pdb
+*.dll
+*.exe
+*.log
+*.dds
+path.txt
