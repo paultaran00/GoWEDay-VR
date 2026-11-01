@@ -51,13 +51,20 @@ end
 
 function eday_asset(full)
     local c = EDAY_ASSETS[full]
+    if c ~= nil and c and full:find("^AkAudioEvent ") then
+        -- (Wwise events have no holder: one that was collected is loaded again)
+        local ok, valid = pcall(function() ks = ks or api:find_uobject("Class /Script/Engine.KismetSystemLibrary"):get_class_default_object() return ks:IsValid(c) end)
+        if ok and not valid then EDAY_ASSETS[full], c = nil, nil end
+    end
     if c ~= nil then return c or nil end
     local obj, result = nil, ""
     -- classes are only looked up (they are the game's own code; never loaded by us)
     if ASSET_LOADER and not full:find("Class ") then
         pcall(function()
             ks = ks or api:find_uobject("Class /Script/Engine.KismetSystemLibrary"):get_class_default_object()
-            vr.set_mod_value("VR_LoadAssetRoot", ASSET_ROOT and "1" or "0")
+            -- Wwise events get the root flag: nothing holds them (no holder type) and the collector freed them, so only
+            -- the sounds the game had loaded itself played.
+            vr.set_mod_value("VR_LoadAssetRoot", (ASSET_ROOT or full:find("^AkAudioEvent ")) and "1" or "0")
             local sp = ks:MakeSoftObjectPath((full:gsub("^%S+%s+", "")))
             vr.set_mod_value("VR_LoadAsset", string.format("%x %x", sp:read_qword(0), sp:read_qword(8)))
             result = vr:get_mod_value("VR_LoadAssetResult") or ""

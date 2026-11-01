@@ -730,6 +730,7 @@ BA.ROD_AT = v(26.0, 6.4, 7.4)    -- weapon space: the rod's middle at rest (seen
 BA.ROD_HALF = v(1.3, 2.0, 1.3)   -- the rod, what index and middle finger hook on (weapon axes)
 BA.HANDLE_TRAVEL = 9.0           -- cm back: all the way (the game's own slide is 9.8)
 function BA.own_handle(weapon) return BA.is_tube(weapon) and not has_bone(weapon, BA.PUMP_BONE) and has_bone(weapon, "b_handle") end
+function BA.pump_auto(weapon) return VR_SETTINGS ~= nil and VR_SETTINGS.pump == "auto" and BA.has_pump(weapon) end
 function BA.cycle_gun(weapon) return BA.has_pump(weapon) or BA.own_handle(weapon) end
 -- Heavy Boomshot: drawn by the copy with b_bolthandle at rest (the game slides it 14 cm per shot), moved only by the hand
 function BA.bolt_gun(weapon)
@@ -1197,6 +1198,21 @@ local function chamber_update(ctx, a)
     local key = weapon_key(ctx.weapon)
     if chamber[key] == nil then chamber[key] = a.AmmoInMagazine > 0 end
     local prev = last_rounds[key]
+    -- VR SETTINGS > SHOTGUN PUMP: AUTO: the pump gun cycles itself - a shot never empties the chamber, a shell loaded into an
+    -- empty gun is chambered at once; the pump's two sounds (open, then close 0.25 s later) are played after a shot
+    if BA.auto_pump_pending ~= nil and os.clock() >= BA.auto_pump_pending.t then
+        BA.snd_post(BA.auto_pump_pending.weapon, "hclose")
+        BA.auto_pump_pending = nil
+    end
+    if BA.pump_auto(ctx.weapon) then
+        if reload.state == "idle" and prev ~= nil and a.AmmoInMagazine < prev and a.AmmoInMagazine > 0 then
+            BA.snd_post(ctx.weapon, "hopen")
+            BA.auto_pump_pending = { weapon = ctx.weapon, t = os.clock() + 0.25 }
+        end
+        chamber[key] = a.AmmoInMagazine > 0
+        last_rounds[key] = a.AmmoInMagazine
+        return chamber[key]
+    end
     if reload.state == "idle" and prev ~= nil and prev > 0 and a.AmmoInMagazine <= 0 then
         chamber[key] = false -- fired dry: the last round left the chamber
         log("chamber empty")
@@ -1451,6 +1467,7 @@ end
 local function work_handle(ctx)
     local a = ammo(ctx.weapon)
     if a == nil then return end
+    if BA.pump_auto(ctx.weapon) then log("pump worked (auto: nothing to do)") return end -- (it cycles itself: no round is ejected)
     local key = weapon_key(ctx.weapon)
     if chamber[key] and a.AmmoInMagazine > 0 then
         local done = false -- the chambered round flies out: one round less (as firing does, so the HUD shows it)

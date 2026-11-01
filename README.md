@@ -27,6 +27,79 @@ A full first-person VR mod for **Gears of War: E-Day** (PC), built on a patched
 3. On the title screen, **hold X** (left controller) to enter offline mode.
 4. In game, the mod's options are in **VR SETTINGS** in the pause menu. `Insert` on the keyboard opens the UEVR menu (advanced).
 
+## How to play
+
+Buttons below are named by where they are on the controller: **lower / upper face button** and **stick press**. In VR SETTINGS > BUTTON MAPPING they show as LEFT X / LEFT Y / RIGHT A / RIGHT B (left lower / left upper / right lower / right upper).
+Everything here is for right-handed play. With **PRIMARY HAND: LEFT** in VR SETTINGS everything is mirrored.
+
+### Moving
+- **Walk:** left stick. You walk where your head looks.
+- **Turn:** right stick (smooth, or snap in VR SETTINGS).
+- **Sprint:** hold the left trigger while walking.
+- **Dash / roadie run:** press the left stick.
+- **Jump / mantle / climb:** left upper button.
+- **Crouch:** crouch for real. Marcus goes down with you, and enemies can't see you behind low cover.
+- **Game cover:** off by default (in VR you take cover with your body). You can put **COVER (GAME)** on any button in BUTTON MAPPING.
+- **Interact** (doors, pickups, mounted guns): left lower button, hold it when the game asks.
+- **Pause menu:** right upper button.
+
+### Weapons
+- The weapon is in your right hand, the right trigger fires. Aim with the barrel; there is no crosshair.
+- **Two hands:** grab the front of the weapon with the left grip. It's steadier and more accurate (shotgun pellets spread half as much).
+- **Pistol with two hands:** cup the bottom of the grip with your left palm and squeeze the left grip.
+- **Switch to the pistol:** right grip at your right hip.
+- **Rifle / shotgun from your back:** right grip over your **left** shoulder. With two long weapons on your back, the first grab gives one, grab again for the other.
+- **Put the weapon away** (free right hand): right grip over your **right** shoulder. Do it again to take it back.
+- **Laser:** right stick press, or touch the laser switch on the side of the weapon with your left index finger and squeeze the left grip.
+- **Melee:** swing the weapon into an enemy, or punch with your left fist (left grip held, empty hand).
+
+### Reloading
+Spare magazines and shells come from your **chest**: reach a little below your chin with the left hand and squeeze the left grip.
+- **Magazine weapons:**
+  1. Grab the magazine with the left grip and pull it out, or press the right lower button to drop it.
+  2. Take a new one from your chest.
+  3. Push it into the magazine well.
+  4. If you fired the weapon empty, pull the charging handle (pistol: the slide) back.
+  Letting go of a magazine at your chest puts it back; dropping it anywhere else loses it.
+- **Shotguns and launchers** load one shell at a time: take a shell from your chest and push it into the loading port.
+- **Gnasher:** after each shot, pull the pump under the barrel forward. If you'd rather not, set **SHOTGUN PUMP: AUTO** in VR SETTINGS.
+- **Longshot:**
+  1. Lift the bolt, pull it back.
+  2. Put a round from your chest into the chamber.
+  3. Push the bolt forward and down.
+  To aim, put your eye to the scope.
+- **Breechshot:** after each shot, pull the handle on the right side back.
+- Heavy weapons reload by themselves.
+
+### Chainsaw (Chainsaw Lancer)
+Grab the folded lever on the left side of the weapon with the left grip, it stands up. Pull it back to start the saw, pull again to stop. Push the running blade into an enemy.
+
+### Grenades
+- **Take it:** a grenade hangs on the right of your belt. Grab it with the left grip.
+- **Arm it:** the trigger of the hand holding it pulls the pin. You have 4 seconds.
+- **Throw it:** swing and let go of the grip. It flies as hard as you throw.
+- **Put it back:** let go before pulling the pin.
+
+### Mounted guns
+- **Get on:** hold the interact button next to the gun.
+- **Aim and fire:** aim with the right controller, fire with the right trigger.
+- **Get off:** hold the right upper button.
+- **Tear it off and carry it:** hold both grips and yank both hands up.
+
+### Menus
+Point with the lasers from your controllers and click with a trigger. The right stick scrolls.
+On the title screen, hold the left lower button.
+
+**VR SETTINGS** (pause menu, above SETTINGS):
+- **PRIMARY HAND:** right or left (left is in beta).
+- **TURNING:** smooth or snap, plus the snap angle.
+- **SHOTGUN PUMP:** manual, or auto (the Gnasher rechambers by itself).
+- **BUTTON MAPPING:** click an action, it shows WAITING FOR INPUT, then press the button you want. If that button was already used, the two actions swap. Press SPACE on the keyboard to set an action to NONE. RESET TO DEFAULTS brings the original layout back.
+
+### If something looks off
+- **View behind your head, or too high or low:** stand straight and recenter your headset. In UEVR's menu (Insert key) there's also **Set Standing Height**.
+- **UEVR menu:** the **Insert** key opens it (advanced).
+
 ## Runs on OpenXR
 
 The mod renders through **OpenXR**: it uses the OpenXR runtime you set active

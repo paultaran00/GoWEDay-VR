@@ -346,6 +346,7 @@ function grenade_right_released(ctx)
     return r
 end
 function grenade_in_hand() return st.state == "hand" end
+function grenade_hand_side() return st.state == "hand" and st.side or nil end -- (vrsettings.lua: the trigger of that hand is the grenade's)
 -- weapon.lua: end of its gamepad hook. The left trigger arms the grenade in the hand (not the sprint then); the
 -- right trigger is held for the game's throw.
 function GRENADE_PAD(state)

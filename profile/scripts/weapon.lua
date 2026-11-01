@@ -1723,10 +1723,13 @@ uevr.sdk.callbacks.on_xinput_get_state(function(retval, user_index, state)
         -- (the game's A only while moving and with nothing ahead to take cover behind - sprint.lua WALL_AHEAD: next to
         -- a wall or from standing still A slides into cover)
         if SPRINTING and lmag >= SPRINT_STOP_STICK and not WALL_AHEAD then buttons = buttons | XINPUT_GAMEPAD_A end
+        -- the button mapped to COVER (GAME) in VR SETTINGS (vrsettings.lua; default none): the game's A - cover / evade / slide
+        if COVER_PAD then buttons = buttons | XINPUT_GAMEPAD_A end
         -- left trigger held while moving: sprint, for as long as it is held - sprint.lua moves Marcus faster.
         -- Not the game's A (its roadie run starts with a dash; the dash is the left stick press only). (No game melee
         -- on it any more - blows are made with real swings.)
         local lt_down = left_trigger > 128
+        if TSPRINT_PAD ~= nil then lt_down = TSPRINT_PAD end -- (VR SETTINGS: the button mapped to the trigger sprint)
         lt_was_down = lt_down
         LT_SPRINT = lt_down and lmag >= SPRINT_STOP_STICK -- sprint.lua: faster walking (the game's A would dash first)
         if os.clock() < (bash_until or 0) then buttons = buttons | XINPUT_GAMEPAD_B end

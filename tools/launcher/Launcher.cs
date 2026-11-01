@@ -28,7 +28,7 @@ static class Launcher
         return 0;
     }
 
-    // ---- path.txt: "GameFolder=...", "Windowed=True|False" lines ----
+    // ---- path.txt: "GameFolder=...", "Windowed=True|False", "GlobalPlugins=True|False" lines ----
     public static Dictionary<string, string> LoadSettings()
     {
         var d = new Dictionary<string, string>();
@@ -41,9 +41,9 @@ static class Launcher
         return d;
     }
 
-    public static void SaveSettings(string folder, bool windowed)
+    public static void SaveSettings(string folder, bool windowed, bool globalPlugins)
     {
-        File.WriteAllLines(SettingsFile, new[] { "GameFolder=" + folder, "Windowed=" + windowed });
+        File.WriteAllLines(SettingsFile, new[] { "GameFolder=" + folder, "Windowed=" + windowed, "GlobalPlugins=" + globalPlugins });
     }
 
     // Any install (Steam, Xbox app, any folder name): a folder is searched for the game exe; an exe is used as is,
@@ -242,7 +242,7 @@ static class Launcher
     }
 
     // ---- Start ----
-    public static int Launch(string gameExe, bool windowed)
+    public static int Launch(string gameExe, bool windowed, bool globalPlugins)
     {
         string injector = Path.Combine(Here, @"UEVR\UEVRInjector.exe");
         string earlyDll = Path.Combine(Here, @"gameinput_vr\gameinput_vr.dll");
@@ -260,6 +260,11 @@ static class Launcher
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                 CopyDir(profileSrc, profileDst);
         }
+
+        // Flag file read by our patched UEVR: present = also load plugins from UnrealVRMod\UEVR\plugins
+        string flag = Path.Combine(profileDst, "load_global_plugins");
+        if (globalPlugins) { Directory.CreateDirectory(profileDst); File.WriteAllText(flag, ""); }
+        else if (File.Exists(flag)) File.Delete(flag);
 
         ForceOpenXR(injector);
 
@@ -371,31 +376,34 @@ class LauncherForm : Form
 {
     readonly TextBox folder = new TextBox();
     readonly CheckBox windowed = new CheckBox { Text = "Windowed", AutoSize = true };
+    readonly CheckBox globalPlugins = new CheckBox { Text = "Load global UEVR plugins (only if you use plugins from other UEVR mods)", AutoSize = true };
 
     public LauncherForm()
     {
         Text = "Gears of War: E-Day VR";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); // the icon csc embedded (tools\launcher\icon.ico)
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
-        ClientSize = new Size(520, 150);
+        ClientSize = new Size(520, 170);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
 
         var lbl1 = new Label { Text = "Game folder or game exe (Steam or Xbox app):", Location = new Point(12, 12), AutoSize = true };
         folder.SetBounds(12, 34, 400, 24);
         var browse = new Button { Text = "Browse...", Location = new Point(420, 32), Size = new Size(88, 27) };
-        var start = new Button { Text = "Start", Location = new Point(388, 100), Size = new Size(120, 36), Font = new Font("Segoe UI", 11f, FontStyle.Bold) };
-        var note = new Label { Text = "Campaign only", Location = new Point(12, 110), AutoSize = true, ForeColor = Color.DarkRed };
-        var kofi = new LinkLabel { Text = "Support the mod on Ko-fi", Location = new Point(130, 110), AutoSize = true };
+        var start = new Button { Text = "Start", Location = new Point(388, 120), Size = new Size(120, 36), Font = new Font("Segoe UI", 11f, FontStyle.Bold) };
+        var note = new Label { Text = "Campaign only", Location = new Point(12, 135), AutoSize = true, ForeColor = Color.DarkRed };
+        var kofi = new LinkLabel { Text = "Support the mod on Ko-fi", Location = new Point(130, 135), AutoSize = true };
         kofi.LinkClicked += (s, e) => Process.Start("https://ko-fi.com/rockonthehill");
         windowed.Location = new Point(12, 70);
-        Controls.AddRange(new Control[] { lbl1, folder, browse, windowed, start, note, kofi });
+        globalPlugins.Location = new Point(12, 94);
+        Controls.AddRange(new Control[] { lbl1, folder, browse, windowed, globalPlugins, start, note, kofi });
         AcceptButton = start;
 
         var cfg = Launcher.LoadSettings();
         string v;
         folder.Text = cfg.TryGetValue("GameFolder", out v) ? v : "";
         windowed.Checked = cfg.TryGetValue("Windowed", out v) && v == "True";
+        globalPlugins.Checked = cfg.TryGetValue("GlobalPlugins", out v) && v == "True";
 
         // One file dialog for both: pick the exe, or open the game folder and press Open with the
         // placeholder name (the dialog then returns <folder>\<placeholder>, which does not exist).
@@ -465,9 +473,9 @@ class LauncherForm : Form
         }
         try
         {
-            Launcher.SaveSettings(dir, windowed.Checked);
+            Launcher.SaveSettings(dir, windowed.Checked, globalPlugins.Checked);
             Cursor = Cursors.WaitCursor;
-            WatchFocus(Launcher.Launch(exe, windowed.Checked));
+            WatchFocus(Launcher.Launch(exe, windowed.Checked, globalPlugins.Checked));
         }
         catch (Exception ex)
         {

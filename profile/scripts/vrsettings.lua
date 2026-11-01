@@ -9,7 +9,7 @@
 -- our widgets only).
 -- Clicks are polled: the laser click (menu.lua's MENU_SENT) over our hovered entry, the gamepad A (VRS_PAD, called from
 -- weapon.lua's xinput callback) while our entry has the focus. Never calls SetGamePaused.
--- Settings: global VR_SETTINGS = { hand = "right"|"left", turn = "smooth"|"snap", snap = 30|45|90, map = { action = physical } }
+-- Settings: global VR_SETTINGS = { hand = "right"|"left", turn = "smooth"|"snap", snap = 30|45|90, pump = "manual"|"auto", map = { action = physical } }
 -- (data/eday_vrsettings.lua). map: which physical button does which gameplay action (BUTTON MAPPING page, VRS_PAD).
 local api = uevr.api
 local vr = uevr.params.vr
@@ -18,37 +18,57 @@ local function log(m) pcall(function() uevr.params.functions.log_info("[vrsettin
 
 -- settings, saved and loaded (UEVR Lua io: files in GoWEDay-Steam/data only; same pattern as arms.lua's holds) -------
 local FILE = "eday_vrsettings.lua"
-local DEFAULT_MAP = { interact = "lX", pause = "rB", eject = "rA", laser = "rS", sprint = "lS", gamey = "lY" }
+local DEFAULT_MAP = { interact = "lX", pause = "rB", eject = "rA", laser = "rS", sprint = "lS", gamey = "lY", cover = "none", tsprint = "lT" }
 local function default_map() local m = {} for k, v in pairs(DEFAULT_MAP) do m[k] = v end return m end
-VR_SETTINGS = { hand = "right", turn = "smooth", snap = 30, map = default_map() }
+VR_SETTINGS = { hand = "right", turn = "smooth", snap = 30, pump = "manual", map = default_map() }
 local SNAP_ANGLES = { 30, 45, 90 }
 -- physical buttons (names of the Quest controllers) and the XInput bits UEVR sends for them (VR.cpp: right A = A,
 -- left X = B, right B = X, left Y = Y, stick presses = LEFT / RIGHT_THUMB); gameplay actions and the bit each is
 -- handled on in weapon.lua's callback (the defaults' bits)
 local PHYS = { { "lX", "LEFT X", 0x2000 }, { "lY", "LEFT Y", 0x8000 }, { "rA", "RIGHT A", 0x1000 }, { "rB", "RIGHT B", 0x4000 },
-               { "lS", "LEFT STICK PRESS", 0x0040 }, { "rS", "RIGHT STICK PRESS", 0x0080 } }
+               { "lS", "LEFT STICK PRESS", 0x0040 }, { "rS", "RIGHT STICK PRESS", 0x0080 },
+               { "lT", "LEFT TRIGGER", 0 }, -- (analog: down past half; its bit is 0, see pr())
+               { "none", "NONE", 0 } } -- (NONE: no button; the action stays unassigned)
 local PHYS_BIT, PHYS_NAME = {}, {}
 for _, ph in ipairs(PHYS) do PHYS_BIT[ph[1]], PHYS_NAME[ph[1]] = ph[3], ph[2] end
-local ACT_BIT = { interact = 0x2000, pause = 0x4000, eject = 0x1000, laser = 0x0080, sprint = 0x0040, gamey = 0x8000 }
+PHYS_NAME.rT = "RIGHT TRIGGER" -- (label only: the left-handed name of lT)
+local ACT_BIT = { interact = 0x2000, pause = 0x4000, eject = 0x1000, laser = 0x0080, sprint = 0x0040, gamey = 0x8000, cover = 0, tsprint = 0 }
 -- (gamey = the game's Y: jump / mantle / climb, measured: Marcus rises 54 cm; control scheme screen)
 local ACTIONS = { -- (the rows of the mapping page, in order)
     { "interact", "INTERACT" }, { "pause", "PAUSE MENU" }, { "eject", "DROP MAGAZINE" }, { "laser", "LASER ON/OFF" },
-    { "sprint", "DASH" }, { "gamey", "JUMP" } } -- (sprint = the game's dash / roadie run: weapon.lua SPRINTING)
+    { "sprint", "DASH" }, { "gamey", "JUMP" }, { "cover", "COVER (GAME)" }, { "tsprint", "SPRINT (HOLD)" } } -- (sprint = the game's dash / roadie run: weapon.lua SPRINTING)
 -- UEVR's VR_SwapControllerInputs (LEFT) mirrors the buttons: the physical button that makes a role's bit is the other hand's
 -- twin (the map is stored by role = bit, so a RIGHT mapping carries over mirrored): the labels name the PHYSICAL button
-local MIRROR = { lX = "rA", rA = "lX", lY = "rB", rB = "lY", lS = "rS", rS = "lS" }
+local MIRROR = { lX = "rA", rA = "lX", lY = "rB", rB = "lY", lS = "rS", rS = "lS", lT = "rT", none = "none" }
 local SIX = 0xF0C0 -- the six remappable bits
 local map_default = true
+-- click-to-listen (BUTTON MAPPING): listen = { act, t0, armed } while a row waits for the next input. VRS_PAD hides the six
+-- buttons from the game meanwhile (six_held = what is down; swallow = until they are let go) and publishes them for tick()
+local LISTEN_TIMEOUT = 10.0
+local listen, swallow, six_held, lt_raw, lt_swallow = nil, false, 0, false, false
 local function check_map_default()
     map_default = true
     for k, v in pairs(DEFAULT_MAP) do if VR_SETTINGS.map[k] ~= v then map_default = false end end
 end
+-- act takes button ph; the action that had ph takes act's old button (swap; NONE swaps with nobody). Any action may be NONE
+-- (the game's pause still works from the keyboard's Esc and a real pad's Start)
+local function assign(map, act, ph)
+    local old = map[act]
+    if ph ~= "none" then
+        for other, p in pairs(map) do
+            if p == ph and other ~= act then map[other] = old end
+        end
+    end
+    map[act] = ph
+    return true
+end
+VRS_ASSIGN = function(act, ph) local r = assign(VR_SETTINGS.map, act, ph) check_map_default() return r end -- (debug: tools/dbg.sh)
 local function vrs_save()
     local f = io.open(FILE, "w")
     if f then
         local m = {}
         for _, a in ipairs(ACTIONS) do m[#m + 1] = string.format("%s = %q", a[1], VR_SETTINGS.map[a[1]]) end
-        f:write(string.format("return { hand = %q, turn = %q, snap = %d, map = { %s } }\n", VR_SETTINGS.hand, VR_SETTINGS.turn, VR_SETTINGS.snap, table.concat(m, ", ")))
+        f:write(string.format("return { hand = %q, turn = %q, snap = %d, pump = %q, map = { %s } }\n", VR_SETTINGS.hand, VR_SETTINGS.turn, VR_SETTINGS.snap, VR_SETTINGS.pump, table.concat(m, ", ")))
         f:close()
     end
 end
@@ -61,14 +81,16 @@ pcall(function()
     if t.hand == "right" or t.hand == "left" then VR_SETTINGS.hand = t.hand end
     if t.turn == "smooth" or t.turn == "snap" then VR_SETTINGS.turn = t.turn end
     for _, a in ipairs(SNAP_ANGLES) do if t.snap == a then VR_SETTINGS.snap = a end end
+    if t.pump == "manual" or t.pump == "auto" then VR_SETTINGS.pump = t.pump end
     if type(t.map) == "table" then -- (valid only whole: every action one known button, no button twice)
         local used, ok_map = {}, true
         for act in pairs(DEFAULT_MAP) do
             local ph = t.map[act]
-            if PHYS_BIT[ph] == nil or used[ph] then ok_map = false break end
+            if ph == nil and (act == "cover" or act == "tsprint") then ph = DEFAULT_MAP[act] end -- (older files: today's controls)
+            if PHYS_BIT[ph] == nil or (used[ph] and ph ~= "none") then ok_map = false break end -- (NONE may repeat)
             used[ph] = true
         end
-        if ok_map then for act in pairs(DEFAULT_MAP) do VR_SETTINGS.map[act] = t.map[act] end end
+        if ok_map then for act in pairs(DEFAULT_MAP) do VR_SETTINGS.map[act] = t.map[act] or DEFAULT_MAP[act] end end
     end
     log(string.format("loaded: hand %s, turn %s, snap %d", VR_SETTINGS.hand, VR_SETTINGS.turn, VR_SETTINGS.snap))
 end)
@@ -82,9 +104,23 @@ local SNAP_PUSH, SNAP_REARM = 0.6, 0.3
 local snap_armed, snap_dir = false, 0
 local a_was, a_edge = false, false
 local pause_held_bit = 0
+-- is the physical button ph down (w = the pad's buttons, lt = the left trigger is down)
+local function pr(ph, w, lt)
+    if ph == "lT" then return lt end
+    return (w & PHYS_BIT[ph]) ~= 0
+end
 function VRS_PAD(state)
     local g = state.Gamepad
+    if listen ~= nil or swallow then -- (an input is being chosen: the game, the menu, does not get the six buttons)
+        six_held, lt_raw = g.wButtons & SIX, g.bLeftTrigger > 128
+        swallow = listen ~= nil or six_held ~= 0
+        g.wButtons = g.wButtons & ~SIX
+    else
+        six_held, lt_raw = 0, false
+    end
+    TSPRINT_PAD = nil -- (nil: weapon.lua reads the left trigger itself; set below when the map is not the default)
     local a = (g.wButtons & 0x1000) ~= 0
+    COVER_PAD = false -- (the button mapped to COVER (GAME): weapon.lua sends the game's A while it is down)
     if a and not a_was then a_edge = true end
     a_was = a
     -- button mapping: in gameplay (and on a turret) the six physical bits are turned into the bits of the actions they
@@ -94,12 +130,17 @@ function VRS_PAD(state)
         local w = g.wButtons
         if EDAY_IN_GAMEPLAY or VEHICLE then
             local out = w & ~SIX
-            for act, ph in pairs(VR_SETTINGS.map) do
-                if (w & PHYS_BIT[ph]) ~= 0 then out = out | ACT_BIT[act] end
+            -- (the left trigger as a button; the grenade in the left hand owns it: grenade.lua arms it with the trigger)
+            local lt = g.bLeftTrigger > 128 and not (grenade_hand_side ~= nil and grenade_hand_side() == "L")
+            local map = VR_SETTINGS.map
+            for act, ph in pairs(map) do
+                if pr(ph, w, lt) then out = out | ACT_BIT[act] end
             end
+            TSPRINT_PAD = pr(map.tsprint, w, lt) -- (a hold: true for as long as the button is down)
             -- the button that opened the pause menu is held on: it must not act in the menu until let go (right B has
             -- that protection in weapon.lua already)
             if (out & 0x4000) ~= 0 and VR_SETTINGS.map.pause ~= "rB" then pause_held_bit = PHYS_BIT[VR_SETTINGS.map.pause] end
+            COVER_PAD = pr(map.cover, w, lt)
             g.wButtons = out
         elseif pause_held_bit ~= 0 then
             if (w & pause_held_bit) ~= 0 then g.wButtons = w & ~pause_held_bit else pause_held_bit = 0 end
@@ -129,6 +170,7 @@ local OPTIONS = {
     { key = "hand", values = { { "PRIMARY HAND: RIGHT", "right" }, { "PRIMARY HAND: LEFT (BETA)", "left" } } },
     { key = "turn", values = { { "TURNING: SMOOTH", "smooth" }, { "TURNING: SNAP", "snap" } } },
     { key = "snap", values = { { "SNAP ANGLE: 30", 30 }, { "SNAP ANGLE: 45", 45 }, { "SNAP ANGLE: 90", 90 } } },
+    { key = "pump", values = { { "SHOTGUN PUMP: MANUAL", "manual" }, { "SHOTGUN PUMP: AUTO", "auto" } } },
 }
 local PANEL_X, PANEL_Y = 980, 300 -- (canvas units: the 1920x1080 UI; the empty right half under the chapter header)
 
@@ -177,6 +219,7 @@ end
 local ui = nil          -- the entries of the pause menu scene that is open (see build)
 local pause_class = nil -- BP_UIScene_PauseMenu_C (found once among the widgets, then used as a filter)
 local last_poll, was_click, click_at = 0, false, nil
+local space_key, space_was = nil, false
 local mouse_was, fired_at, mouse_key = false, -9, nil -- (a real mouse click; fired_at = one press = one activation)
 local FULL_SCAN_EVERY = 1.0
 
@@ -224,11 +267,12 @@ end
 -- the same for the mapping rows: of each action the entry of the button it is on
 local function show_map()
     local hand = VR_SETTINGS.hand
+    local la = listen and listen.act
     for _, row in ipairs(ui.map_rows) do
-        for _, e in ipairs(row) do e.btn:SetVisibility((VR_SETTINGS.map[e.action] == e.phys and e.hand == hand) and 0 or 1) end
+        for _, e in ipairs(row) do e.btn:SetVisibility((VR_SETTINGS.map[e.action] == e.phys and e.hand == hand and la ~= e.action) and 0 or 1) end
     end
-    if ui.sprint_rows then
-        for h, e in pairs(ui.sprint_rows) do e.btn:SetVisibility(h == hand and 3 or 1) end -- (3: shown, no hover)
+    if ui.listen_rows then
+        for act, e in pairs(ui.listen_rows) do e.btn:SetVisibility(act == la and 0 or 1) end
     end
 end
 
@@ -307,20 +351,50 @@ local function build(pc, scene)
             end
         end
     end
+    -- (the row of an action that waits for an input: shown instead of its value)
+    u.listen_rows = {}
+    for _, a in ipairs(ACTIONS) do
+        local e = add("map", u.map_panel, a[2] .. ": WAITING FOR INPUT...", "map")
+        e.action, e.phys = a[1], "listen"
+        u.listen_rows[a[1]] = e
+    end
     u.scene_obj = scene
     ui = u
-    -- sprint (faster walk) is on a trigger, not one of the six buttons: shown, not remappable (the physical trigger
-    -- of the support hand: UEVR swaps the triggers when left-handed)
-    u.sprint_rows = { right = add("map", u.map_panel, "SPRINT: LEFT TRIGGER (HOLD)", "title"),
-                      left = add("map", u.map_panel, "SPRINT: RIGHT TRIGGER (HOLD)", "title") }
     show_map()
+    add("map", u.map_panel, "PRESS SPACE FOR NONE", "title")
     u.reset = add("map", u.map_panel, "RESET TO DEFAULTS", "reset")
     u.map_back = add("map", u.map_panel, "BACK", "map_back")
     log("built in " .. u.scene)
 end
 
+local function stop_listen(why)
+    if listen == nil then return end
+    listen = nil
+    swallow, lt_swallow = true, true -- (what is still held does not act, nor click, until it is let go)
+    if ui ~= nil and not ui.dead then show_map() end
+    if why then log("listen " .. why) end
+end
+local function start_listen(act)
+    listen = { act = act, t0 = os.clock(), armed = false }
+    swallow = true
+    show_map()
+    log("listening: " .. act)
+end
+-- the action takes the button (or NONE) and the listening ends
+local function commit(act, ph)
+    assign(VR_SETTINGS.map, act, ph)
+    check_map_default()
+    stop_listen()
+    show_map()
+    vrs_save()
+    log("map " .. act .. " -> " .. ph)
+end
+local function set_none(act) commit(act, "none") end -- (SPACE)
+VRS_NONE = function(act) set_none(act) end -- (debug: tools/dbg.sh)
+
 local function activate(e)
     local kind = e.kind
+    if kind ~= "map" and listen ~= nil then stop_listen("cancelled") end
     if e == ui.main then
         set_panel(not ui.open)
     elseif kind == "back" then
@@ -342,17 +416,8 @@ local function activate(e)
         vrs_save()
         log(string.format("hand %s, turn %s, snap %d", VR_SETTINGS.hand, VR_SETTINGS.turn, VR_SETTINGS.snap))
     elseif kind == "map" then
-        -- the action takes the next button; the action that had it gets this one's old button (swap)
-        local map, cur = VR_SETTINGS.map, e.phys
-        local idx = 1
-        for i, ph in ipairs(PHYS) do if ph[1] == cur then idx = i end end
-        local nxt = PHYS[idx % #PHYS + 1][1]
-        for other, ph in pairs(map) do if ph == nxt and other ~= e.action then map[other] = cur end end
-        map[e.action] = nxt
-        check_map_default()
-        show_map()
-        vrs_save()
-        log("map " .. e.action .. " -> " .. nxt)
+        -- click = listen for the next input (the same row again cancels; another row switches)
+        if listen ~= nil and listen.act == e.action then stop_listen("cancelled") else start_listen(e.action) end
     elseif kind == "reset" then
         VR_SETTINGS.map = default_map()
         check_map_default()
@@ -408,11 +473,38 @@ local function tick()
             if not ok then log("build failed: " .. tostring(err)) end
         end
     end
-    if ui == nil or ui.dead then a_edge = false return end
+    if ui == nil or ui.dead then a_edge, listen = false, nil return end
+    -- a row listens: the first mappable input pressed after everything was let go is its button (the left trigger is read
+    -- from menu.lua's click state, which zeroes it)
+    local lt_c, rt_c = false, false
+    do
+        local on, cr, cl = (MENU_SENT or ""):match("^(%d) (%d) (%d)")
+        if on == "1" then lt_c, rt_c = (EDAY_LEFTY and cr or cl) == "1", (EDAY_LEFTY and cl or cr) == "1" end
+    end
+    if lt_swallow and not lt_c and not lt_raw then lt_swallow = false end
+    if listen ~= nil then
+        if not ui.open or ui.page ~= "map" then stop_listen("cancelled")
+        elseif now - listen.t0 > LISTEN_TIMEOUT then stop_listen("timed out")
+        else
+            local ltd = lt_c or lt_raw
+            if not listen.armed then
+                if six_held == 0 and not ltd then listen.armed = true end
+            else
+                local got
+                for _, ph in ipairs(PHYS) do
+                    if PHYS_BIT[ph[1]] ~= 0 and (six_held & PHYS_BIT[ph[1]]) ~= 0 then got = ph[1] break end
+                end
+                if got == nil and ltd then got = "lT" end
+                if got ~= nil then commit(listen.act, got) end
+            end
+        end
+    end
     -- laser click edge (menu.lua sends "on click_r click_l ...")
     local click = false
     local s = MENU_SENT
-    if s ~= nil then local on, cr, cl = s:match("^(%d) (%d) (%d)") click = on == "1" and (cr == "1" or cl == "1") end
+    if s ~= nil then local on, cr, cl = s:match("^(%d) (%d) (%d)") 
+        -- (the support hand's trigger is a mappable input: it does not click while a row listens)
+        click = on == "1" and ((EDAY_LEFTY and cl or cr) == "1" or ((EDAY_LEFTY and cr or cl) == "1" and listen == nil and not lt_swallow)) end
     local edge = click and not was_click
     was_click = click
     if VRS_SIM_CLICK then VRS_SIM_CLICK, edge = nil, true end -- (debug: tools/dbg.sh; a simulated pad does not reach menu.lua)
@@ -434,6 +526,15 @@ local function tick()
         which = pick(true)
         if which ~= nil or now - click_at > 0.25 then click_at = nil end
     end
+    space_key = space_key or { KeyName = ks:Conv_StringToName("SpaceBar") }
+    local sp = pc:IsInputKeyDown(space_key)
+    if (sp and not space_was) or VRS_SIM_SPACE then
+        local e = ui.open and ui.page == "map" and (pick(true) or pick(false)) or nil
+        if listen ~= nil and ui.open and ui.page == "map" then fired_at = now which = nil click_at = nil set_none(listen.act) e = nil end -- (listening: SPACE = NONE)
+        if VRS_SIM_SPACE then e = VRS_SIM_SPACE VRS_SIM_SPACE = nil end -- (debug: an entry; the real key needs the keyboard)
+        if e ~= nil and e.kind == "map" then fired_at = now which = nil click_at = nil set_none(e.action) end
+    end
+    space_was = sp
     if which ~= nil and now - fired_at < 0.4 then which = nil click_at = nil end
     if which ~= nil then fired_at = now activate(which) end
 end
@@ -447,5 +548,8 @@ uevr.sdk.callbacks.on_pre_engine_tick(function()
 end)
 
 VRS_MAP_CHECK = check_map_default -- (debug: after a map change from dbg)
+VRS_SAVE = vrs_save -- (debug)
+VRS_ACTIVATE = activate -- (debug)
+VRS_LISTEN = function() return listen end -- (debug)
 VRS_STATE = function() return ui end -- (debug: tools/dbg.sh)
 log("loaded")

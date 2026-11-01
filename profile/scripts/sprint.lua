@@ -102,6 +102,15 @@ end)
 CROUCH_DROP = 0
 local CROUCH = { dead = 10.0, max = 80.0, tau = 0.08 }
 local crouch = { pawn = nil, base_z = nil, stand_h = nil }
+local crouch_logged = {}
+-- (diagnosis: a player says crouch does not work; a log line per event, at most once per `every` s each)
+local function crouch_log(m, key, every)
+    local now = os.clock()
+    if now - (crouch_logged[key] or -1e9) < every then return end
+    crouch_logged[key] = now
+    log("crouch: " .. m)
+end
+CROUCH_LOG = crouch_log -- (debug)
 local hmd_p, hmd_q = UEVR_Vector3f.new(), UEVR_Quaternionf.new()
 -- The headset height is read in the view callback (as weapon.lua reads the controllers): read from the engine tick,
 -- vr.get_pose / is_hmd_active cost ~12 ms a frame (measured: 72 -> 36 fps); the tick only uses the last value.
@@ -130,7 +139,10 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
             -- stand_h = highest headset height seen; it never came down, so a recenter / lifted headset left it stale
             -- (body 19-30 cm low while standing). Reset it on a tracking jump (>25 cm in <0.25 s) and when the
             -- standing origin changes; and let it sink while walking upright (a crouch walk is slower than 150 cm/s).
-            if crouch.last_h and now - crouch.last_h_at < 0.25 and math.abs(h - crouch.last_h) > 25 then crouch.stand_h = nil end
+            if crouch.last_h and now - crouch.last_h_at < 0.25 and math.abs(h - crouch.last_h) > 25 then
+                crouch.stand_h = nil
+                crouch_log(string.format("tracking jump %.0f cm, stand height reset", h - crouch.last_h), "org", 5)
+            end
             crouch.last_h, crouch.last_h_at = h, now
             if now - (crouch.org_at or 0) > 0.5 then
                 crouch.org_at = now
@@ -139,7 +151,13 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
                 local px, py, pz = crouch.org_x, crouch.org_y, crouch.org_z
                 uevr.params.vr.get_standing_origin(o)
                 crouch.org_x, crouch.org_y, crouch.org_z = o.x, o.y, o.z
-                if px and (math.abs(o.x - px) + math.abs(o.y - py) + math.abs(o.z - pz)) > 0.01 then crouch.stand_h = nil end
+                if px then
+                    local moved = (math.abs(o.x - px) + math.abs(o.y - py) + math.abs(o.z - pz)) * 100 -- cm
+                    if moved > 5 then
+                        crouch.stand_h = nil
+                        crouch_log(string.format("standing origin moved %.0f cm, stand height reset", moved), "org", 5)
+                    end
+                end
             end
             crouch.stand_h = math.max(crouch.stand_h or h, h)
             local vel = pawn:GetVelocity()
@@ -150,6 +168,13 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
             want = math.max(0, math.min(CROUCH.max, crouch.stand_h - h - CROUCH.dead))
         end
         local before = CROUCH_DROP
+        if not crouch.down_logged and CROUCH_DROP > 20 then
+            crouch.down_logged = true
+            crouch_log(string.format("body down %.0f cm", CROUCH_DROP), "down", 1)
+        elseif crouch.down_logged and CROUCH_DROP < 5 then
+            crouch.down_logged = false
+            crouch_log("up", "up", 1)
+        end
         CROUCH_DROP = CROUCH_DROP + (want - CROUCH_DROP) * (1 - math.exp(-delta / CROUCH.tau))
         if want == 0 and CROUCH_DROP < 0.05 then CROUCH_DROP = 0 end
         -- every tick while crouched: the game may put the mesh back to its nominal z behind our back
