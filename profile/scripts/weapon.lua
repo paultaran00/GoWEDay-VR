@@ -1140,6 +1140,128 @@ function hide_crosshair(pawn)
     end
 end
 LADDER_EXIT_TIME, LADDER_EXIT_MAX = 0.8, 3.0 -- s the game's body stays after the ladder (at most, waiting for the weapon)
+-- Gnasher in hand: in the frame the game adds PawnState.Ladder.Climbing it also adds its own position to the capsule's
+-- (about 2x the world position, Marcus ends up under the map; the pistol is fine). The tag appearing together with a jump
+-- of more than LADDER_JUMP_MAX cm in one tick: put him back where he was the tick before.
+LADDER_JUMP_MAX = 5000
+-- The game turns Marcus ~14 deg off the ladder; his arms reach ~50 cm forward, so both hands land 10-16 cm right of the
+-- rails. LADDER_FACE_DELAY s after the climb starts (the game has placed him) the wall behind the ladder is measured: traces
+-- along his forward at hand height, every 5 cm across +-70 cm; rails/rungs are short outliers, the wall is a line
+-- d = a + slope * s. He is turned by atan(slope) to face it (once per ladder), only if the fit is clean.
+LADDER_FACE_DELAY, LADDER_FACE_MIN_ERR = 0.3, 2 -- s; deg (any larger turn is allowed)
+LADDER_FACE_MIN_HITS, LADDER_FACE_MAX_RES, LADDER_FACE_OUTLIER = 15, 3, 5 -- hits; cm rms; cm off the line
+do
+    local function fit(pts) -- least squares d = a + b s
+        local n, ss, sd, sss, ssd = #pts, 0, 0, 0, 0
+        for _, q in ipairs(pts) do ss, sd, sss, ssd = ss + q[1], sd + q[2], sss + q[1] * q[1], ssd + q[1] * q[2] end
+        local den = n * sss - ss * ss
+        if den == 0 then return nil end
+        local b = (n * ssd - ss * sd) / den
+        return (sd - b * ss) / n, b
+    end
+    local function med(t) table.sort(t) local n = #t return n % 2 == 1 and t[(n + 1) // 2] or (t[n // 2] + t[n // 2 + 1]) / 2 end
+    -- returns yaw, err (deg), inliers, rms (cm) or nil, reason
+    function ladder_face_measure(p)
+        local rot = p:K2_GetActorRotation()
+        local yaw = rot.Yaw or rot.y
+        local c = p:K2_GetActorLocation()
+        local z, nz = 0, 0
+        for _, n in ipairs({ "b_hand_l", "b_hand_R" }) do
+            local ok, l = pcall(function() return ucall(p.Mesh, "GetSocketLocation", ucall(kismet_string, "Conv_StringToName", n)) end)
+            if ok and l then z, nz = z + (l.z or l.Z), nz + 1 end
+        end
+        z = nz > 0 and z / nz or c.z
+        -- which way is the wall: the nearest hit of 36 traces around him (the game may have turned him 90 deg off)
+        local rough, best = yaw, 1e9
+        for k = 0, 35 do
+            local ra = math.rad(yaw + k * 10)
+            local hit = world_block(p, nil, v(c.x, c.y, z), v(c.x + math.cos(ra) * 150, c.y + math.sin(ra) * 150, z), 0)
+            if hit then
+                local d = math.sqrt((hit.x - c.x) ^ 2 + (hit.y - c.y) ^ 2)
+                if d < best then best, rough = d, yaw + k * 10 end
+            end
+        end
+        local r = math.rad(rough)
+        local fx, fy, rx, ry = math.cos(r), math.sin(r), -math.sin(r), math.cos(r)
+        local pts = {}
+        for s = -70, 70, 5 do
+            local from = v(c.x + rx * s, c.y + ry * s, z)
+            local hit = world_block(p, nil, from, v(from.x + fx * 150, from.y + fy * 150, z), 0)
+            if hit then pts[#pts + 1] = { s, math.sqrt((hit.x - from.x) ^ 2 + (hit.y - from.y) ^ 2) } end
+        end
+        if #pts < LADDER_FACE_MIN_HITS then return nil, "only " .. #pts .. " hits", yaw end
+        local sl = {} -- robust start: median slope of far-apart pairs
+        for i = 1, #pts do for j = i + 1, #pts do
+            if pts[j][1] - pts[i][1] >= 30 then sl[#sl + 1] = (pts[j][2] - pts[i][2]) / (pts[j][1] - pts[i][1]) end
+        end end
+        if #sl == 0 then return nil, "no spread", yaw end
+        local b = med(sl)
+        local ic = {}
+        for _, q in ipairs(pts) do ic[#ic + 1] = q[2] - b * q[1] end
+        local a = med(ic)
+        local inl = pts
+        for _ = 1, 4 do
+            inl = {}
+            for _, q in ipairs(pts) do if math.abs(q[2] - (a + b * q[1])) <= LADDER_FACE_OUTLIER then inl[#inl + 1] = q end end
+            if #inl < LADDER_FACE_MIN_HITS then return nil, "only " .. #inl .. " inliers of " .. #pts, yaw end
+            local a2, b2 = fit(inl)
+            if not a2 then return nil, "degenerate", yaw end
+            a, b = a2, b2
+        end
+        local e2 = 0
+        for _, q in ipairs(inl) do e2 = e2 + (q[2] - (a + b * q[1])) ^ 2 end
+        local rms = math.sqrt(e2 / #inl)
+        if rms > LADDER_FACE_MAX_RES then return nil, string.format("residual %.1f cm", rms), yaw end
+        local err = math.deg(math.atan(b))
+        return yaw, err, #inl, rms, rough, rough - err
+    end
+    function LADDER_FACE_DRY()
+        local p = api:get_local_pawn(0)
+        if p == nil then return "no pawn" end
+        local yaw, err, n, rms, rough, final = ladder_face_measure(p)
+        if not yaw then return "no fit: " .. tostring(err) .. " (yaw " .. tostring(n) .. ")" end
+        return string.format("yaw %.2f rough %.0f err %.2f final %.2f inliers %d rms %.2f cm", yaw, rough, err, final, n, rms)
+    end
+end
+do
+    local last, last_lad, fix_errors = nil, false, 0
+    local lad_t, face_done = 0, true
+    uevr.sdk.callbacks.on_pre_engine_tick(function()
+        local ok, err = pcall(function()
+            local p = api:get_local_pawn(0)
+            if p == nil then last = nil return end
+            local c = p:K2_GetActorLocation()
+            local lad = false
+            pcall(function()
+                local t = p:GetComponentByClass(api:find_uobject("Class /Script/TCGameplayTags.TCGameplayTagComponent")).CachedOwnedTagContainer.GameplayTags
+                for i = 1, #t do if t[i].TagName:to_string():find("Ladder") then lad = true break end end
+            end)
+            if last ~= nil and lad and not last_lad and last.z ~= 0 then
+                local dx, dy, dz = c.x - last.x, c.y - last.y, c.z - last.z
+                if dx * dx + dy * dy + dz * dz > LADDER_JUMP_MAX * LADDER_JUMP_MAX then
+                    p:K2_SetActorLocation(Vector3d.new(last.x, last.y, last.z), false, {}, true)
+                    log(string.format("ladder entry threw the pawn %.0f m away: put back", math.sqrt(dx * dx + dy * dy + dz * dz) / 100))
+                    c = p:K2_GetActorLocation()
+                end
+            end
+            if lad and not last_lad and last ~= nil then lad_t, face_done = clock, false end -- (not on the first tick after a reload)
+            if not lad then face_done = true end
+            if lad and not face_done and clock - lad_t >= LADDER_FACE_DELAY then
+                face_done = true
+                local yaw, err, n, rms, rough, final = ladder_face_measure(p)
+                if not yaw then log("ladder: not turned (" .. tostring(err) .. ")")
+                elseif math.abs(final - yaw) % 360 < LADDER_FACE_MIN_ERR or math.abs(final - yaw) % 360 > 360 - LADDER_FACE_MIN_ERR then
+                    log(string.format("ladder: not turned (already facing, yaw %.1f)", yaw))
+                else
+                    p:K2_SetActorRotation(Vector3d.new(0, final, 0), false)
+                    log(string.format("ladder: turned to face the wall (yaw %.1f -> %.1f, rough %.0f, err %.1f deg, %d hits, rms %.1f cm)", yaw, final, rough, err, n, rms))
+                end
+            end
+            last, last_lad = { x = c.x, y = c.y, z = c.z }, lad
+        end)
+        if not ok then fix_errors = fix_errors + 1 if fix_errors % 300 == 1 then log("ladder fix: " .. tostring(err)) end end
+    end)
+end
 -- the game's aim (LT) while the foregrip is held: off. Switching it on or off snapped the game's control rotation to
 -- the weapon (50-77 deg in one frame, recorded) and turned the VR view; undoing the snap frame by frame did not work
 -- (the game keeps forcing it ~0.4 s). Shots go along the barrel anyway (fire_from_hands).
