@@ -34,6 +34,10 @@ local FORWARD_OFFSET_CM = 0.0
 -- animation (that would move the camera, and the weapon in the hands with it).
 local EYE_HEIGHT_TAU = 0.5 -- seconds; higher = steadier, but slower to follow crouch / cover
 local smoothed_rel_z, last_clock = nil, nil
+-- dead zone on top of the low-pass: the view height is held while the smoothed height stays within EYE_DEADBAND of it
+-- (walking steps and the start/stop dips leak through the low-pass as up to ~10 cm swings); a stance change eases it.
+local EYE_DEADBAND, EYE_HOLD_TAU, EYE_HOLD_PERSIST = 15, 0.25, 0.6 -- (it must stay outside the dead zone this long: walk start/stop dips are shorter)
+local eye_hold, eye_hold_moving, eye_out_t = nil, false, 0
 
 -- Walk where the head looks. MovementOrientation only rotates gamepad stick input, so also let the head drive
 -- the player's control rotation (that is what W / the stick move along). AimMethod: 0 = game, 1 = head, 2/3 = right/left controller.
@@ -62,6 +66,15 @@ pcall(function() uevr.params.vr.set_mod_value("VR_DesktopStabilize", "on 1.5 0.0
 
 -- No motion blur: it makes people sick in VR, and the hands/weapon we move after the game's animation get velocity
 -- from the animated pose, which smears them into long streaks down to where the animation had them.
+-- how far sprint.lua really lowered the body mesh (0 if unknown / not lowered)
+local function actual_crouch_drop(pawn)
+    local z0 = rawget(_G, "CROUCH_MESH_BASE_Z")
+    if z0 == nil then return 0 end
+    local ok, z = pcall(function() return pawn.Mesh.RelativeLocation.z end)
+    if not ok or z == nil then return 0 end
+    return math.max(0, z0 - z)
+end
+
 local function set_cvar(name, value)
     local ok, err = pcall(function()
         local var = api:get_console_manager():find_variable(name)
@@ -95,6 +108,7 @@ local function hide_head(pawn)
         return
     end
     hidden_for = pawn
+    eye_hold = nil
 
     local meshes = ucall(pawn, "K2_GetComponentsByClass", skeletal_mesh_c)
     for _, mesh in ipairs(meshes or {}) do
@@ -136,6 +150,36 @@ local function hide_flashlight(pawn)
             local par = c:GetAttachParent()
             if par and par:get_fname():to_string():find("Flashlight", 1, true) and c:IsVisible() then
                 c:SetVisibility(false, false)
+            end
+        end
+    end)
+end
+
+-- the game can show hair/beard again or add a mesh later (outfit swap, quality change): re-asserted every 1.5 s
+local rehide_next, rehid_logged = 0, {}
+local function rehide_head(pawn)
+    local now = os.clock()
+    if now < rehide_next or hidden_for ~= pawn then return end
+    rehide_next = now + 1.5
+    local function note(c, what)
+        local n = c:get_fname():to_string()
+        if not rehid_logged[n] then rehid_logged[n] = true log("re-hid " .. n .. " (" .. what .. ")") end
+    end
+    pcall(function()
+        if groom_c ~= nil then
+            for _, g in ipairs(ucall(pawn, "K2_GetComponentsByClass", groom_c) or {}) do
+                if g:IsVisible() then g:SetVisibility(false, true) note(g, "groom") end
+            end
+        end
+        local hc = pawn.HairCards
+        if hc ~= nil and hc:IsVisible() then hc:SetVisibility(false, true) note(hc, "HairCards") end
+        local bn = ucall(kismet_string, "Conv_StringToName", hidden_bones[1])
+        for _, m in ipairs(ucall(pawn, "K2_GetComponentsByClass", skeletal_mesh_c) or {}) do
+            if not m:get_fname():to_string():find("Component_%d+$") and not m:IsBoneHiddenByName(bn) then
+                for _, bone in ipairs(hidden_bones) do
+                    pcall(function() ucall(m, "HideBoneByName", ucall(kismet_string, "Conv_StringToName", bone), 0) end)
+                end
+                note(m, "bones")
             end
         end
     end)
@@ -349,6 +393,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     end
     hide_head(pawn)
     hide_flashlight(pawn)
+    rehide_head(pawn)
 
     -- Horizontally the camera sits on the capsule's centre, not on the head: the game twists the torso when
     -- aiming/firing and the head swings with it. Height comes from the eyes (crouch, cover), smoothed.
@@ -361,12 +406,22 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         local now = os.clock()
         local dt = last_clock and math.min(now - last_clock, 0.1) or 0
         last_clock = now
-        local rel = eye_z - base.z + (CROUCH_DROP or 0) -- (sprint.lua lowers the body with a real crouch: not the view)
+        -- sprint.lua lowers the body with a real crouch: not the view. Add back what the mesh is ACTUALLY lowered (the
+        -- game may reset it to nominal while CROUCH_DROP > 0), so the view follows the headset whatever the body does.
+        local rel = eye_z - base.z + actual_crouch_drop(pawn)
         smoothed_rel_z = smoothed_rel_z == nil and rel or smoothed_rel_z + (rel - smoothed_rel_z) * (1 - math.exp(-dt / EYE_HEIGHT_TAU))
+        if eye_hold == nil then eye_hold = smoothed_rel_z end
+        local d = smoothed_rel_z - eye_hold
+        eye_out_t = math.abs(d) > EYE_DEADBAND and eye_out_t + dt or 0
+        if eye_out_t >= EYE_HOLD_PERSIST then eye_hold_moving, eye_out_t = true, 0 end
+        if eye_hold_moving then
+            eye_hold = eye_hold + d * (1 - math.exp(-dt / EYE_HOLD_TAU))
+            if math.abs(smoothed_rel_z - eye_hold) <= 1 then eye_hold_moving = false end
+        end
     end
     position.x = base.x + fwd.x * FORWARD_OFFSET_CM
     position.y = base.y + fwd.y * FORWARD_OFFSET_CM
-    position.z = base.z + (smoothed_rel_z or (eye_z - base.z))
+    position.z = base.z + (eye_hold or smoothed_rel_z or (eye_z - base.z))
     -- on a ladder the game's own body is shown (weapon.lua LADDER) and it hangs off the capsule's centre (going down
     -- the camera sat in its chest): the view goes to its eyes, eased so the switch does not jump
     local want_k = (LADDER or os.clock() < (OFF_TURRET_UNTIL or 0)) and 1 or 0
@@ -390,7 +445,7 @@ end)
 function fp_eye_position(pawn)
     local base = ucall(pawn, "K2_GetActorLocation")
     local l, r = ucall(pawn.Mesh, "GetSocketLocation", name_eye_l), ucall(pawn.Mesh, "GetSocketLocation", name_eye_r)
-    return { x = base.x, y = base.y, z = base.z + (smoothed_rel_z or ((l.z + r.z) * 0.5 - base.z + (CROUCH_DROP or 0))) }
+    return { x = base.x, y = base.y, z = base.z + (eye_hold or smoothed_rel_z or ((l.z + r.z) * 0.5 - base.z + actual_crouch_drop(pawn))) }
 end
 
 -- Paused (menu, game in the background): the view stays level and looking straight ahead, the way it faced when the

@@ -18,6 +18,12 @@ GRENADE = GRENADE or {
     in_hand_R = { x = 9.0, y = 4.5, z = 0.0 },
     grip_z = -7.5,         -- cm along the grenade (mesh z): the point of the handle in the fist's hole
     handover_timeout = 2.5,
+    -- the flight stays ours after the hand-over (the game's own projectile movement steered it down after ~0.2 s):
+    restitution = 0.3,     -- bounce: the velocity along the surface normal comes back times this
+    friction = 0.6,        -- bounce: the sliding velocity loses this share
+    rest_speed = 80,       -- cm/s: slower than this after a bounce (or max_bounces): it lies, the game settles and blows it
+    max_bounces = 3,
+    max_flight = 6.0,      -- s: then released to the game whatever happens
     scale = 1.0,
 }
 local G = GRENADE
@@ -206,14 +212,34 @@ local function hand_frame()
     return add(hole, mul(axis, -G.grip_z)), fx, axis
 end
 
+-- The release velocity: the PEAK of the swing, not the mean of the last 80 ms. At the end of an overhand swing the hand
+-- already slows and turns upward, so the mean was too slow and too vertical (a real throw measured 2-3 m/s forward,
+-- 8-9 m/s up: ~70 deg, landed 3-4 m away). Velocities are taken over spans of >= 30 ms (noise) and the fastest one that
+-- ends in the last 150 ms counts. The second result is the old end-of-swing mean (log only).
 local function hand_velocity()
     local h = st.hist
-    if #h < 2 then return v(0, 0, 0) end
+    if #h < 2 then return v(0, 0, 0), v(0, 0, 0) end
     local a, b = h[1], h[#h]
-    local dt = b.t - a.t
-    if dt < 1e-3 then return v(0, 0, 0) end
-    return mul(sub(b.p, a.p), 1 / dt)
+    local old = v(0, 0, 0)
+    if b.t - a.t > 1e-3 then old = mul(sub(b.p, a.p), 1 / (b.t - a.t)) end
+    local best, bs = nil, -1
+    for i = 1, #h - 1 do
+        if h[i].t >= b.t - 0.15 then
+            for j = i + 1, #h do
+                local dt = h[j].t - h[i].t
+                if dt >= 0.03 or j == #h then
+                    if dt > 1e-3 then
+                        local u = mul(sub(h[j].p, h[i].p), 1 / dt)
+                        if len(u) > bs then best, bs = u, len(u) end
+                    end
+                    break
+                end
+            end
+        end
+    end
+    return best or old, old
 end
+G.hand_velocity = hand_velocity -- (debug)
 
 local function haptic(amp, secs)
     pcall(function() eday_haptic(0.0, secs or 0.05, 120, amp, st.side == "R" and vr.get_right_joystick_source() or vr.get_left_joystick_source()) end)
@@ -231,12 +257,13 @@ local function start_throw(ctx, vel)
     end)
     local ok = pcall(function() inv:EquipInventoryItemInSlot(inv:GetItemSlotFromInventoryItem(st.item), false) end)
     st.state, st.fly_vel, st.throw_t, st.fly_t = "flying", vel, os.clock(), os.clock()
+    st.proj, st.bounces, st.landed = nil, 0, false
     st.fly_pos = st.fly_pos or hand_frame()
     GRENADE_RT = true
     log(string.format("thrown at %.0f cm/s (equip %s)", len(vel), tostring(ok)))
 end
 
-local function end_throw(ctx, why)
+local function restore_item(ctx)
     GRENADE_RT = false
     pcall(function()
         local inv = ctx.pawn:GetComponentByClass(inv_c)
@@ -244,6 +271,12 @@ local function end_throw(ctx, why)
             inv:EquipInventoryItemInSlot(inv:GetItemSlotFromInventoryItem(st.prev_item), false)
         end
     end)
+    st.prev_item = nil
+end
+
+local function end_throw(ctx, why)
+    restore_item(ctx)
+    st.proj, st.bounces, st.landed = nil, 0, false
     st.state, st.armed_at, st.item_t = "body", nil, -10
     log("throw " .. why)
 end
@@ -285,7 +318,11 @@ function grenade_left_released(ctx)
         log("put back (not armed)")
         return true
     end
-    local vel = GRENADE_DEV_VEL or mul(hand_velocity(), G.throw_gain) -- (GRENADE_DEV_VEL: tests - a simulated hand jumps)
+    local pk, old = hand_velocity()
+    local vel = GRENADE_DEV_VEL or mul(pk, G.throw_gain) -- (GRENADE_DEV_VEL: tests - a simulated hand jumps)
+    local function elev(u) return math.deg(math.atan(u.z, math.sqrt(u.x * u.x + u.y * u.y))) end
+    log(string.format("release: peak %.0f cm/s at %.0f deg above horizontal; end-of-swing mean %.0f cm/s at %.0f deg; thrown %.0f cm/s",
+        len(pk), elev(pk), len(old), elev(old), len(vel)))
     st.fly_pos = (hand_frame())
     start_throw(ctx, vel)
     return true
@@ -332,7 +369,7 @@ function grenade_update(ctx)
     local now = os.clock()
     local item = grenade_item(ctx.pawn)
     table.insert(st.hist, { p = (st.side == "R" and ctx.right_pos) or ctx.left_pos, t = now })
-    while #st.hist > 1 and now - st.hist[1].t > 0.08 do table.remove(st.hist, 1) end
+    while #st.hist > 1 and now - st.hist[1].t > 0.2 do table.remove(st.hist, 1) end
     if not make_parts(ctx.pawn, item) then return end
 
     if st.state == "body" then
@@ -361,23 +398,44 @@ function grenade_update(ctx)
             start_throw(ctx, v(0, 0, 0))
         end
     elseif st.state == "flying" then
-        local dt = math.min(0.05, now - (st.fly_t or now))
+        local gap = now - (st.fly_t or now)
+        if gap > 0.5 then -- updates were off (cutscene / turret): hand it to the game as it is
+            show_parts(false)
+            if st.proj then pcall(function() st.proj.MovementComp.Velocity = Vector3d.new(0, 0, 0) end) end
+            end_throw(ctx, string.format("released: no update for %.1f s", gap))
+            return
+        end
+        local dt = math.min(0.05, gap)
         st.fly_t = now
-        if st.fly_pos then
+        -- ours is the flight: gravity, the line trace per step, bounces; the game's projectile (once it exists) is put
+        -- on it every tick
+        if st.fly_pos and not st.landed then
             st.fly_vel = add(st.fly_vel, v(0, 0, -980 * dt))
             local nxt = add(st.fly_pos, mul(st.fly_vel, dt))
-            -- (it stops on what it meets: without this a late hand-over - 1 s for the Locust frag - found it under the
-            -- floor and the game's grenade fell through the world, never going off)
             pcall(function()
                 G.hit = G.hit or StructObject.new(api:find_uobject("ScriptStruct /Script/Engine.HitResult"))
                 G.ksys = G.ksys or api:find_uobject("Class /Script/Engine.KismetSystemLibrary"):get_class_default_object()
+                local ign = { ctx.pawn }
+                if st.proj then ign[2] = st.proj end
                 local got = G.ksys:LineTraceSingle(ctx.pawn, Vector3d.new(st.fly_pos.x, st.fly_pos.y, st.fly_pos.z),
-                    Vector3d.new(nxt.x, nxt.y, nxt.z), 1, false, { ctx.pawn }, 0, G.hit, true,
+                    Vector3d.new(nxt.x, nxt.y, nxt.z), 1, false, ign, 0, G.hit, true,
                     { R = 0, G = 0, B = 0, A = 0 }, { R = 0, G = 0, B = 0, A = 0 }, 0)
                 if got then
                     local ip, n = G.hit.ImpactPoint, G.hit.ImpactNormal
-                    nxt = v((ip.X or ip.x) + (n.X or n.x) * 4, (ip.Y or ip.y) + (n.Y or n.y) * 4, (ip.Z or ip.z) + (n.Z or n.z) * 4)
-                    st.fly_vel = v(0, 0, 0)
+                    n = v(n.X or n.x, n.Y or n.y, n.Z or n.z)
+                    nxt = v((ip.X or ip.x) + n.x * 4, (ip.Y or ip.y) + n.y * 4, (ip.Z or ip.z) + n.z * 4)
+                    local fv = st.fly_vel
+                    local vn = fv.x * n.x + fv.y * n.y + fv.z * n.z
+                    if vn < 0 then
+                        local vt = sub(fv, mul(n, vn))
+                        st.fly_vel = add(mul(vt, 1 - G.friction), mul(n, -vn * G.restitution))
+                        st.bounces = st.bounces + 1
+                        st.last_hit = { t = now - st.throw_t, p = copy(nxt) }
+                        if st.bounces == 1 then st.first_hit = st.last_hit end
+                    end
+                    if len(st.fly_vel) < G.rest_speed or st.bounces >= G.max_bounces then
+                        st.fly_vel, st.landed = v(0, 0, 0), true
+                    end
                 end
             end)
             st.fly_pos = nxt
@@ -385,17 +443,36 @@ function grenade_update(ctx)
         end
         -- the game's grenade item in the hand stays hidden (the throw is ours)
         pcall(function() if item then item:SetActorHiddenInGame(true) end end)
-        local pr = find_projectile(ctx.pawn)
-        if pr ~= nil and st.fly_pos ~= nil then
-            pcall(function()
-                pr:K2_SetActorLocation(Vector3d.new(st.fly_pos.x, st.fly_pos.y, st.fly_pos.z), false, {}, true)
-                pr.MovementComp.Velocity = Vector3d.new(st.fly_vel.x, st.fly_vel.y, st.fly_vel.z)
-            end)
-            show_parts(false)
-            end_throw(ctx, string.format("handed over to the game's grenade after %.2f s", now - st.throw_t))
-        elseif now - st.throw_t > G.handover_timeout then
-            show_parts(false)
-            end_throw(ctx, "failed: no projectile from the game")
+        if st.proj == nil then
+            local pr = find_projectile(ctx.pawn)
+            if pr ~= nil and st.fly_pos ~= nil then
+                st.proj = pr
+                show_parts(false) -- (its own mesh shows)
+                restore_item(ctx) -- the weapon back in the hand, the trigger let go
+                log(string.format("game's grenade found after %.2f s: flight stays ours", now - st.throw_t))
+            elseif now - st.throw_t > G.handover_timeout then
+                show_parts(false)
+                end_throw(ctx, "failed: no projectile from the game")
+                return
+            end
+        end
+        if st.proj ~= nil then
+            local pr, alive = st.proj, false
+            pcall(function() alive = pr:K2_GetActorLocation() ~= nil and not pr.bExploded end)
+            if not alive then
+                end_throw(ctx, "projectile gone / exploded")
+            elseif st.landed or now - st.throw_t > G.max_flight then
+                pcall(function()
+                    pr:K2_SetActorLocation(Vector3d.new(st.fly_pos.x, st.fly_pos.y, st.fly_pos.z), false, {}, true)
+                    pr.MovementComp.Velocity = Vector3d.new(0, 0, 0)
+                end)
+                end_throw(ctx, string.format("%s after %.2f s", st.landed and "landed" or "max flight, released", now - st.throw_t))
+            else
+                pcall(function()
+                    pr:K2_SetActorLocation(Vector3d.new(st.fly_pos.x, st.fly_pos.y, st.fly_pos.z), false, {}, true)
+                    pr.MovementComp.Velocity = Vector3d.new(st.fly_vel.x, st.fly_vel.y, st.fly_vel.z)
+                end)
+            end
         end
     end
 end

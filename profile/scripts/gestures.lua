@@ -648,6 +648,49 @@ end
 -- the finger curl is worked out against the knob box moved back by the same amount (rack.back), so the hand keeps its shape
 BA.HOLD_BACK = { BP_Wpn_HammerBurst_C = 3.5 }
 BA.CLASSES = { "Longshot" }
+-- Sounds of the reload: the game's own Wwise events, posted as saw.lua does (ClientTCWisePostEventGlobal).
+-- Per weapon (first class-name match): out = magazine out, ins = magazine in, rnd = one round / shell in ("folder/Event"
+-- under BA.SND_DIR); what a weapon has no event for falls back to BA.SND_DEF (the Lancer's, the Gnasher's).
+BA.SND_DIR = "AkAudioEvent /Game/WwiseAudio/Events/Fairlight_Events/Weapons/"
+BA.SND_DEF = { out = "Lancer/Play_WEP_Lancer_Reload_ClipEject", ins = "Lancer/Play_WEP_Lancer_Reload_ClipInsert", rnd = "Gnasher/Play_WEP_Gnasher_Reload_Insert",
+              hopen = "Lancer/Play_WEP_Lancer_Reload_CockOpen", hclose = "Lancer/Play_WEP_Lancer_Reload_CockClose" }
+-- hopen / hclose = the chamber handle (charging handle, slide, bolt, pump) at full pull / back home (others: the Lancer's)
+BA.SND_KINDS = { "out", "ins", "rnd", "hopen", "hclose" }
+BA.SND = {
+    { cls = "LancerMk1", out = "Lancer_MK1/Play_WEP_Lancer_MK1_Reload_ClipEject", ins = "Lancer_MK1/Play_WEP_Lancer_MK1_Reload_ClipInsert",
+      hopen = "Lancer_MK1/Play_WEP_Lancer_MK1_Reload_BoltOpen", hclose = "Lancer_MK1/Play_WEP_Lancer_MK1_Reload_Arm" },
+    { cls = "Lancer", out = BA.SND_DEF.out, ins = BA.SND_DEF.ins },
+    { cls = "HammerBurst", out = "HammerBurst/Play_WEP_Hammerburst_Reload_ClipEject", ins = "HammerBurst/Play_WEP_HammerBurst_Reload_ClipInsert" },
+    { cls = "Snub", out = "Snub/Play_WEP_Snub_Reload_ClipEject", ins = "Snub/Play_WEP_Snub_Reload_ClipInsert", hopen = "Snub/Play_WEP_Snub_Reload_CockClose", hclose = "Snub/Play_WEP_Snub_Reload_CockClose" },
+    { cls = "Magnum", out = "Snub/Play_WEP_Snub_Reload_ClipEject", ins = "Snub/Play_WEP_Snub_Reload_ClipInsert", hopen = "Snub/Play_WEP_Snub_Reload_CockClose", hclose = "Snub/Play_WEP_Snub_Reload_CockClose" },
+    { cls = "LocustShotgun", out = "LocustShotgun/Play_WEP_LocustShotgun_Reload_EjectClip", hopen = "LocustShotgun/Play_WEP_LocustShotgun_Reload_Breech_Open", hclose = "LocustShotgun/Play_WEP_LocustShotgun_Reload_Breech_Close" }, -- (no insert event: the Lancer's)
+    { cls = "Longshot", out = "Longshot/Play_WEP_Longshot_Reload_ClipEject", ins = "Longshot/Play_WEP_Longshot_Reload_ClipInsert", hopen = "Longshot/Play_WEP_Longshot_Reload_BoltOpen", hclose = "Longshot/Play_WEP_Longshot_Reload_BoltClose" },
+    { cls = "LMG", out = "LocustLMG/Play_WEP_LocustLMG_Reload_ClipEject", ins = "LocustLMG/Play_WEP_LocustLMG_Reload_ClipInsert" },
+    { cls = "Breechshot", rnd = "Breechshot/Play_WEP_Breechshot_Reload_InsertShell", hopen = "Breechshot/Play_WEP_Breechshot_Reload_BreechOpen", hclose = "Breechshot/Play_WEP_Breechshot_Reload_Arm" },
+    { cls = "Gnasher", hopen = "Gnasher/Play_WEP_Gnasher_Reload_Open", hclose = "Gnasher/Play_WEP_Gnasher_Reload_Close" },
+    { cls = "Gutpuncher", out = "Grenade_Launcher/Play_WEP_Gutpuncher_Reload_ClipEject", hopen = "Grenade_Launcher/Play_WEP_Gutpuncher_Reload_CockOpen", rnd = "Grenade_Launcher/Play_WEP_Gutpuncher_Reload_InsertShell" },
+    { cls = "CogGrenadeLauncher", hopen = "Grenade_Launcher/Play_WEP_Gutpuncher_Reload_CockOpen", rnd = "Grenade_Launcher/Play_WEP_Gutpuncher_Reload_InsertShell" },
+    { cls = "Boomshot", hclose = "Boomshot/Play_WEP_Boomshot_Reload_Arm", out = "Boomshot/Play_WEP_Boomshot_Reload_ClipEject", rnd = "Boomshot/Play_WEP_Boomshot_Reload_InsertShell" },
+}
+function BA.snd_event(weapon, kind) -- "folder/Event" of this weapon for kind
+    local ok, cname = pcall(function() return weapon:GetOwner():get_class():get_fname():to_string() end)
+    if ok then
+        for _, e in ipairs(BA.SND) do
+            if cname:find(e.cls) then return e[kind] or BA.SND_DEF[kind] end
+        end
+    end
+    return BA.SND_DEF[kind]
+end
+function BA.snd_post(weapon, kind) -- kind: "out" | "ins" | "rnd"
+    local e = BA.snd_event(weapon, kind)
+    local name = e:match("[^/]+$")
+    local ev = load_asset(BA.SND_DIR .. e:match("^[^/]+") .. "/" .. name .. "." .. name)
+    local posted = false
+    if ev ~= nil then posted = pcall(function() api:get_player_controller(0):ClientTCWisePostEventGlobal(ev, nil) end) end
+    BA.SND_LOG = BA.SND_LOG or {}
+    table.insert(BA.SND_LOG, string.format("%.2f %s %s", clock, kind, name))
+    log(string.format("sound %s: %s (%s)", kind, name, posted and "posted" or "not found"))
+end
 -- Tube (shotguns): a shell from the chest, held like the bolt action's round, pushed into the loading port under the
 -- receiver: one more round (one less spare), up to full. No bolt to work.
 BA.TUBE_CLASSES = { "Gnasher", "Breechshot", "Gutpuncher", "CogGrenadeLauncher" }
@@ -1190,9 +1233,10 @@ function BA.cycle_update(ctx, a)
     end
     st.last = n
     local pull = (HELD_HANDLE ~= nil and HELD_HANDLE.bolt ~= nil) and (BOLT_PULL or 0) or 0
-    if pull >= spec.travel * 0.8 then st.back = true end
+    if pull >= spec.travel * 0.8 and not st.back then st.back = true BA.snd_post(ctx.weapon, "hopen") end
     if st.back and pull < spec.travel * 0.25 then
         st.back = false
+        BA.snd_post(ctx.weapon, "hclose")
         if st.need then st.need = false log("bolt rod worked: next round in") end
     end
     if st.need then fire_blocked = true end
@@ -1475,6 +1519,7 @@ end
 
 local function insert_mag(ctx)
     local item = ctx.weapon:GetOwner()
+    BA.snd_post(ctx.weapon, "ins")
     local c = mag_split_sync(ctx.weapon, ammo(ctx.weapon))
     if c ~= nil then
         -- one of two magazines: a fresh one adds half the capacity from the spare ammo, the same one its own rounds
@@ -1873,6 +1918,7 @@ function gestures_left_released(ctx)
             end
             log(string.format("bolt let go: %s", ba_closed(st) and "locked" or (st.pulled >= BA.OPEN and "open" or "unlocked")))
         end
+        if rack.ba == nil and rack.done then BA.snd_post(ctx.weapon, "hclose") end -- (let go at full pull: it snaps home)
         rack, bolt_show, HELD_MAG_BOX = nil, nil, nil
         return true
     end
@@ -1964,6 +2010,7 @@ local function eject_mag(ctx)
     if m == nil then return end
     place(m, { pos = wf.pos, x = wf.x, y = wf.y, z = wf.z })
     weapon_mag_out(ctx.weapon)
+    BA.snd_post(ctx.weapon, "out")
     if c ~= nil then
         local side = MAG_SIDE[wkey(ctx.weapon)]
         set_mag_rounds(ctx.weapon, a, math.max(0, rounds_left(a) - c[side]))
@@ -2096,6 +2143,7 @@ gestures_update_inner = function(ctx)
         if st.pulled >= BA.OPEN and not st.ejected then
             -- open: whatever is in the chamber flies out (a live round is lost, as when a bolt is worked)
             st.ejected = true
+            BA.snd_post(ctx.weapon, "hopen")
             local a = ammo(ctx.weapon)
             if a ~= nil and a.AmmoInMagazine > 0 then
                 for _, o in ipairs(ctx.weapon:GetOwner().ReplicatedAssemblyObjects or {}) do
@@ -2105,6 +2153,7 @@ gestures_update_inner = function(ctx)
             eject_round(ctx)
             log("bolt open: chamber emptied")
         elseif st.pulled < 2 then
+            if st.ejected then BA.snd_post(ctx.weapon, "hclose") end
             st.ejected = false -- (pushed forward again: the next opening empties it again)
         end
         bolt_show = { weapon = ctx.weapon, bone = bolt_bone(ctx.weapon), pulled = st.pulled, roll = BA.TURN_DEG * st.turned }
@@ -2163,9 +2212,11 @@ gestures_update_inner = function(ctx)
         end
         if not rack.done and rack.pulled >= (rack.travel or BOLT_TRAVEL) then
             rack.done = true
+            BA.snd_post(ctx.weapon, "hopen")
             work_handle(ctx)
         elseif rack.done and rack.pulled < (rack.travel or BOLT_TRAVEL) * 0.3 then
             rack.done = false -- pushed forward again: can be worked again
+            BA.snd_post(ctx.weapon, "hclose")
         end
     end
     local spare_left = a ~= nil and a.SpareAmmo > 0 and (has_bone(ctx.weapon, mag_spec(ctx.weapon).bone) or BA.is_tube(ctx.weapon))
@@ -2202,6 +2253,7 @@ gestures_update_inner = function(ctx)
             -- free: from now on it is in the hand
             reload.state = "holding"
             reload.armed = false -- it must leave the well's reach before it can slide back in
+            BA.snd_post(ctx.weapon, "out")
             attach_to_hand(ctx, wf)
             -- the rounds left in it leave with it (back in if this same magazine goes back in)
             local a = ammo(ctx.weapon)
@@ -2260,6 +2312,7 @@ gestures_update_inner = function(ctx)
                 reload = { state = "idle", weapon = nil, mag = nil, fresh = false }
                 LEFT_PINCH_CURL = nil
                 local b = ammo(ctx.weapon)
+                BA.snd_post(ctx.weapon, "rnd")
                 log(string.format("shell in: %s/%s, spare %s", tostring(b and b.AmmoInMagazine), tostring(b and b.MagazineCapacity), tostring(b and b.SpareAmmo)))
             end
             return
@@ -2275,6 +2328,7 @@ gestures_update_inner = function(ctx)
             reload = { state = "idle", weapon = nil, mag = nil, fresh = false }
             LEFT_PINCH_CURL = nil
             local b = ammo(ctx.weapon)
+            BA.snd_post(ctx.weapon, "rnd")
             log(string.format("round in: %s/%s, spare %s", tostring(b and b.AmmoInMagazine), tostring(b and b.MagazineCapacity), tostring(b and b.SpareAmmo)))
         end
         return
@@ -2479,6 +2533,11 @@ if eday_prefetch_add ~= nil then
     eday_prefetch_add(function(pawn)
         local list = { GENERIC_MAG, ROUND_MESH, LASER_MATERIAL }
         for _, m in ipairs(MAG_MESHES) do table.insert(list, m.mesh) end
+        local seen = {}
+        local function add_snd(e) -- (the reload sounds: BA.SND)
+            if e ~= nil and not seen[e] then seen[e] = true local n = e:match("[^/]+$") table.insert(list, BA.SND_DIR .. e:match("^[^/]+") .. "/" .. n .. "." .. n) end
+        end
+        for _, k in ipairs(BA.SND_KINDS) do add_snd(BA.SND_DEF[k]) for _, e in ipairs(BA.SND) do add_snd(e[k]) end end
         for _, a in ipairs(attached_weapons(pawn)) do
             local cname = a:get_class():get_fname():to_string()
             local name = cname:match("^BP_Wpn_(.-)_C$")

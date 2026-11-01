@@ -121,17 +121,39 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
         local mesh = pawn.Mesh
         if pawn ~= crouch.pawn then
             crouch.pawn, crouch.base_z, CROUCH_DROP = pawn, mesh.RelativeLocation.z, 0
+            CROUCH_MESH_BASE_Z = crouch.base_z -- (fp.lua: the view adds back the ACTUAL lowering of the mesh, base_z - its z)
         end
         local want = 0
         if hmd_h ~= nil and os.clock() - hmd_h_at < 0.25 and not CINEMATIC and not VEHICLE and not LADDER then
             local h = hmd_h
+            local now = os.clock()
+            -- stand_h = highest headset height seen; it never came down, so a recenter / lifted headset left it stale
+            -- (body 19-30 cm low while standing). Reset it on a tracking jump (>25 cm in <0.25 s) and when the
+            -- standing origin changes; and let it sink while walking upright (a crouch walk is slower than 150 cm/s).
+            if crouch.last_h and now - crouch.last_h_at < 0.25 and math.abs(h - crouch.last_h) > 25 then crouch.stand_h = nil end
+            crouch.last_h, crouch.last_h_at = h, now
+            if now - (crouch.org_at or 0) > 0.5 then
+                crouch.org_at = now
+                crouch.org = crouch.org or UEVR_Vector3f.new()
+                local o = crouch.org
+                local px, py, pz = crouch.org_x, crouch.org_y, crouch.org_z
+                uevr.params.vr.get_standing_origin(o)
+                crouch.org_x, crouch.org_y, crouch.org_z = o.x, o.y, o.z
+                if px and (math.abs(o.x - px) + math.abs(o.y - py) + math.abs(o.z - pz)) > 0.01 then crouch.stand_h = nil end
+            end
             crouch.stand_h = math.max(crouch.stand_h or h, h)
+            local vel = pawn:GetVelocity()
+            if math.sqrt(vel.x * vel.x + vel.y * vel.y) > 150 and h < crouch.stand_h and crouch.stand_h - h < 30 then
+                crouch.stand_h = math.max(h, crouch.stand_h - 2 * delta)
+            end
+            CROUCH_STAND_H, CROUCH_HMD_H = crouch.stand_h, h -- (debug)
             want = math.max(0, math.min(CROUCH.max, crouch.stand_h - h - CROUCH.dead))
         end
         local before = CROUCH_DROP
         CROUCH_DROP = CROUCH_DROP + (want - CROUCH_DROP) * (1 - math.exp(-delta / CROUCH.tau))
         if want == 0 and CROUCH_DROP < 0.05 then CROUCH_DROP = 0 end
-        if math.abs(CROUCH_DROP - before) > 0.01 or (CROUCH_DROP == 0 and before ~= 0) then
+        -- every tick while crouched: the game may put the mesh back to its nominal z behind our back
+        if CROUCH_DROP > 0 or math.abs(CROUCH_DROP - before) > 0.01 or (CROUCH_DROP == 0 and before ~= 0) then
             local r = mesh.RelativeLocation
             mesh:K2_SetRelativeLocation(Vector3d.new(r.x, r.y, crouch.base_z - CROUCH_DROP), false, {}, true)
         end
