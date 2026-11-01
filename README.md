@@ -23,7 +23,7 @@ A full first-person VR mod for **Gears of War: E-Day** (PC), built on a patched
 ## Install
 
 1. Download the latest zip from [Releases](../../releases) and unzip it anywhere.
-2. Run `GoWEDay_VR.exe`, pick the game folder or exe, tick Windowed if you want a window, press **Start**.
+2. Run `GoWEDay_VR.exe`, pick the game folder or exe, tick Windowed if you want a window, pick the VR runtime (SteamVR, or Virtual Desktop's VDXR), press **Start**.
 3. On the title screen, **hold X** (left controller) to enter offline mode.
 4. In game, the mod's options are in **VR SETTINGS** in the pause menu. `Insert` on the keyboard opens the UEVR menu (advanced).
 

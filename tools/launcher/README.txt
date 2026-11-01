@@ -23,6 +23,7 @@ In SteamVR > Settings > OpenXR, SteamVR must be the active OpenXR runtime.
 4. Tick Windowed to play in a window (the game keeps its own resolution).
    The headset image is the same; a window lets you Alt+Tab.
    Load global UEVR plugins: only if you use plugins from UEVR's global plugins folder (off by default; some can break the start).
+   VR runtime: SteamVR (default) or Virtual Desktop (VDXR). For VDXR, pick VDXR as the OpenXR runtime in the Virtual Desktop Streamer settings. VDXR is new and less tested: tell us how it works.
 5. Press Start. Folder and options are saved in path.txt; next time just press Start.
 
 Start launches SteamVR if needed, starts the game without Easy Anti-Cheat (offline/campaign only),

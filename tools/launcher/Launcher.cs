@@ -28,7 +28,7 @@ static class Launcher
         return 0;
     }
 
-    // ---- path.txt: "GameFolder=...", "Windowed=True|False", "GlobalPlugins=True|False" lines ----
+    // ---- path.txt: "GameFolder=...", "Windowed=True|False", "GlobalPlugins=True|False", "Runtime=SteamVR|VDXR" lines ----
     public static Dictionary<string, string> LoadSettings()
     {
         var d = new Dictionary<string, string>();
@@ -41,9 +41,14 @@ static class Launcher
         return d;
     }
 
-    public static void SaveSettings(string folder, bool windowed, bool globalPlugins)
+    public static string[] SettingsLines(string folder, bool windowed, bool globalPlugins, bool vdxr)
     {
-        File.WriteAllLines(SettingsFile, new[] { "GameFolder=" + folder, "Windowed=" + windowed, "GlobalPlugins=" + globalPlugins });
+        return new[] { "GameFolder=" + folder, "Windowed=" + windowed, "GlobalPlugins=" + globalPlugins, "Runtime=" + (vdxr ? "VDXR" : "SteamVR") };
+    }
+
+    public static void SaveSettings(string folder, bool windowed, bool globalPlugins, bool vdxr)
+    {
+        File.WriteAllLines(SettingsFile, SettingsLines(folder, windowed, globalPlugins, vdxr));
     }
 
     // Any install (Steam, Xbox app, any folder name): a folder is searched for the game exe; an exe is used as is,
@@ -242,7 +247,7 @@ static class Launcher
     }
 
     // ---- Start ----
-    public static int Launch(string gameExe, bool windowed, bool globalPlugins)
+    public static int Launch(string gameExe, bool windowed, bool globalPlugins, bool vdxr)
     {
         string injector = Path.Combine(Here, @"UEVR\UEVRInjector.exe");
         string earlyDll = Path.Combine(Here, @"gameinput_vr\gameinput_vr.dll");
@@ -268,7 +273,7 @@ static class Launcher
 
         ForceOpenXR(injector);
 
-        if (Process.GetProcessesByName("vrserver").Length == 0)
+        if (!vdxr && Process.GetProcessesByName("vrserver").Length == 0) // VDXR runs without SteamVR
             Process.Start("steam://rungameid/250820"); // SteamVR
 
         if (IsSteamCopy(gameExe))
@@ -366,6 +371,19 @@ static class Launcher
             fails += check(!IsSteamCopy(xgame), "xbox copy is not steam");
         }
         finally { Directory.Delete(x, true); }
+        {
+            string tf = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllLines(tf, SettingsLines("x", true, false, true));
+                var lines = File.ReadAllLines(tf);
+                fails += check(lines.Contains("Runtime=VDXR") && !lines.Contains("Runtime=SteamVR"), "path.txt Runtime=VDXR written");
+                fails += check(SettingsLines("a", false, false, false).Contains("Runtime=SteamVR"), "path.txt Runtime=SteamVR written");
+                // old file without a Runtime line = SteamVR (the form tests Runtime == "VDXR")
+                string v; fails += check(!new Dictionary<string, string> { { "GameFolder", "a" } }.TryGetValue("Runtime", out v), "old path.txt -> SteamVR");
+            }
+            finally { File.Delete(tf); }
+        }
         fails += check(WindowArgs(true) == "-windowed", "windowed args");
         fails += check(WindowArgs(false) == "-fullscreen", "fullscreen args");
         return fails;
@@ -377,26 +395,31 @@ class LauncherForm : Form
     readonly TextBox folder = new TextBox();
     readonly CheckBox windowed = new CheckBox { Text = "Windowed", AutoSize = true };
     readonly CheckBox globalPlugins = new CheckBox { Text = "Load global UEVR plugins (only if you use plugins from other UEVR mods)", AutoSize = true };
+    readonly RadioButton rtSteam = new RadioButton { Text = "SteamVR", AutoSize = true, Checked = true };
+    readonly RadioButton rtVdxr = new RadioButton { Text = "Virtual Desktop (VDXR)", AutoSize = true };
 
     public LauncherForm()
     {
         Text = "Gears of War: E-Day VR";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); // the icon csc embedded (tools\launcher\icon.ico)
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
-        ClientSize = new Size(520, 170);
+        ClientSize = new Size(520, 232);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
 
         var lbl1 = new Label { Text = "Game folder or game exe (Steam or Xbox app):", Location = new Point(12, 12), AutoSize = true };
         folder.SetBounds(12, 34, 400, 24);
         var browse = new Button { Text = "Browse...", Location = new Point(420, 32), Size = new Size(88, 27) };
-        var start = new Button { Text = "Start", Location = new Point(388, 120), Size = new Size(120, 36), Font = new Font("Segoe UI", 11f, FontStyle.Bold) };
-        var note = new Label { Text = "Campaign only", Location = new Point(12, 135), AutoSize = true, ForeColor = Color.DarkRed };
-        var kofi = new LinkLabel { Text = "Support the mod on Ko-fi", Location = new Point(130, 135), AutoSize = true };
+        var start = new Button { Text = "Start", Location = new Point(388, 184), Size = new Size(120, 36), Font = new Font("Segoe UI", 11f, FontStyle.Bold) };
+        var note = new Label { Text = "Campaign only", Location = new Point(12, 199), AutoSize = true, ForeColor = Color.DarkRed };
+        var kofi = new LinkLabel { Text = "Support the mod on Ko-fi", Location = new Point(130, 199), AutoSize = true };
         kofi.LinkClicked += (s, e) => Process.Start("https://ko-fi.com/rockonthehill");
         windowed.Location = new Point(12, 70);
         globalPlugins.Location = new Point(12, 94);
-        Controls.AddRange(new Control[] { lbl1, folder, browse, windowed, globalPlugins, start, note, kofi });
+        rtSteam.Location = new Point(12, 122);
+        rtVdxr.Location = new Point(12, 144);
+        var hint = new Label { Text = "Select VDXR as the OpenXR runtime in the Virtual Desktop Streamer settings.", Location = new Point(30, 165), AutoSize = true, ForeColor = Color.Gray };
+        Controls.AddRange(new Control[] { lbl1, folder, browse, windowed, globalPlugins, rtSteam, rtVdxr, hint, start, note, kofi });
         AcceptButton = start;
 
         var cfg = Launcher.LoadSettings();
@@ -404,6 +427,7 @@ class LauncherForm : Form
         folder.Text = cfg.TryGetValue("GameFolder", out v) ? v : "";
         windowed.Checked = cfg.TryGetValue("Windowed", out v) && v == "True";
         globalPlugins.Checked = cfg.TryGetValue("GlobalPlugins", out v) && v == "True";
+        if (cfg.TryGetValue("Runtime", out v) && v == "VDXR") rtVdxr.Checked = true; else rtSteam.Checked = true;
 
         // One file dialog for both: pick the exe, or open the game folder and press Open with the
         // placeholder name (the dialog then returns <folder>\<placeholder>, which does not exist).
@@ -471,11 +495,15 @@ class LauncherForm : Form
                 "\n\nPick the folder where Gears of War: E-Day is installed, or the game exe itself.", "GoW E-Day VR", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
+        if (rtVdxr.Checked && Process.GetProcessesByName("VirtualDesktop.Streamer").Length == 0 &&
+            MessageBox.Show(this, "Virtual Desktop Streamer is not running.\n\nStart anyway?", "GoW E-Day VR",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
         try
         {
-            Launcher.SaveSettings(dir, windowed.Checked, globalPlugins.Checked);
+            Launcher.SaveSettings(dir, windowed.Checked, globalPlugins.Checked, rtVdxr.Checked);
             Cursor = Cursors.WaitCursor;
-            WatchFocus(Launcher.Launch(exe, windowed.Checked, globalPlugins.Checked));
+            WatchFocus(Launcher.Launch(exe, windowed.Checked, globalPlugins.Checked, rtVdxr.Checked));
         }
         catch (Exception ex)
         {
