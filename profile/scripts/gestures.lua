@@ -439,6 +439,7 @@ local function set_mag_rounds(weapon, a, rounds) -- rounds the player can fire
     local pct = n >= a.MagazineCapacity and 1.0 or (n + 0.25) / math.max(1, a.MagazineCapacity)
     ucall(weapon_util, "SetAmmoPercentOnAllMagazines", weapon:GetOwner(), true, pct, false, 0.0)
     refresh_hud(weapon)
+    HUD_AT = { w = weapon, frames = 2, n = n } -- (the counter follows only after the engine tick: BA.hud_run)
 end
 local fire_blocked = false
 function gestures_fire_blocked() return fire_blocked end
@@ -722,6 +723,26 @@ BA.PUMP_RADIUS = 11.2             -- cm from the hand / its fingers to it: taken
 BA.DONE_FRAC = { pump = 0.7, rod = 7 / 9, def = 0.8 }
 function BA.done_frac(r) return r.pump and BA.DONE_FRAC.pump or (r.half and BA.DONE_FRAC.rod or BA.DONE_FRAC.def) end
 function BA.bolt_radius(bb) return BOLT_GRAB_RADIUS * (bb == "b_slide" and 1.6 or 1.3) end
+-- The ammo counter (HUD) did not follow a count changed inside work_handle (only the next shot refreshed it), while the same
+-- SetAmmoPercentOnAllMagazines call made a moment later does. set_mag_rounds sets HUD_AT: the count is re-announced 2 frames after:
+-- one round off and back (two announced changes, the widget ends on the real count). Run from the engine tick.
+function BA.hud_run()
+    local h = HUD_AT
+    h.frames = h.frames - 1
+    if h.frames > 0 then return end
+    HUD_AT = nil
+    pcall(function()
+        local a = ammo(h.w)
+        if a == nil then return end
+        local n, cap = h.n, a.MagazineCapacity
+        if a.AmmoInMagazine ~= n then return end -- (changed again meanwhile - the game's reload etc.: leave it)
+        local function setn(r) ucall(weapon_util, "SetAmmoPercentOnAllMagazines", h.w:GetOwner(), true, r >= cap and 1.0 or (r + 0.25) / math.max(1, cap), false, 0.0) end
+        setn(n >= cap and n - 1 or n + 1)
+        setn(n)
+    end)
+end
+-- (gestures_update runs in the stereo-view callback, where the game does not announce ammo changes: the engine tick does)
+uevr.sdk.callbacks.on_pre_engine_tick(function() if HUD_AT ~= nil then BA.hud_run() end end)
 function BA.tick() pcall(function() eday_haptic(0.0, 0.05, 140, 0.8, vr.get_left_joystick_source()) end) end
 -- Switching weapons: `reload` is one table for the weapon in hand. Called when the weapon in hand is not reload.weapon:
 -- a magazine from the chest in the left hand goes back (reset_reload); a weapon whose magazine was dropped (A) is parked
@@ -968,7 +989,10 @@ GC_FRAME, gc_sent = 0, setmetatable({}, { __mode = "k" })
 -- cutscene - left the game stuck paused after the pause menu was closed; bisected to gestures.lua)
 local statics = api:find_uobject("Class /Script/Engine.GameplayStatics"):get_class_default_object()
 local paused_frame, paused = -1, false
-function GC_TRANSFER(gc)
+-- early = sent from the pre-tick, BEFORE this frame's placement of the weapon: it carries last frame's positions (a walking
+-- hand: 4-8 cm behind, drawn one frame late = the weapon flickers), so it does not count as this frame's transfer: the one
+-- after the placement (gestures_weapon_placed) is the one that must be the last
+function GC_TRANSFER(gc, early)
     if gc_sent[gc] == GC_FRAME then return true end
     if paused_frame ~= GC_FRAME then
         paused_frame = GC_FRAME
@@ -982,7 +1006,7 @@ function GC_TRANSFER(gc)
         return owner ~= nil and ucall(kismet_system, "IsValid", owner) and not owner:IsActorBeingDestroyed()
     end)
     if not (ok and alive) then return false end
-    gc_sent[gc] = GC_FRAME
+    if not early then gc_sent[gc] = GC_FRAME end
     pcall(function() ucall(gc, "TransferSkinningFromGTtoRT") end)
     return true
 end
@@ -1339,7 +1363,7 @@ end
 uevr.sdk.callbacks.on_pre_engine_tick(function()
     GC_FRAME = GC_FRAME + 1
     for gc in pairs(relinked_gcs) do
-        if not GC_TRANSFER(gc) then relinked_gcs[gc] = nil end
+        if not GC_TRANSFER(gc, true) then relinked_gcs[gc] = nil end
     end
     local ok, err = pcall(function()
         if api:get_local_pawn(0) == nil then return end -- (level change: nothing of ours is touched while the world goes)
@@ -1421,7 +1445,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function()
                 local nx, nz = rot(x), rot(z)
                 ucall(bc.comp, "SetBoneRotationByName", fname(tb), rot_from_xz(Vector3d.new(nx.x, nx.y, nx.z), Vector3d.new(nz.x, nz.y, nz.z)), 0)
             end
-            if bc.gc ~= nil and bc.shown then GC_TRANSFER(bc.gc) end -- pieces follow every frame
+            if bc.gc ~= nil and bc.shown then GC_TRANSFER(bc.gc, true) end -- pieces follow every frame
             -- (weapon.lua's ladder pass hides every *Component_N, this one too: shown again when the ladder is done)
             if not LADDER and bc.shown_comp.bHiddenInGame then bc.shown_comp:SetHiddenInGame(false, false) end
             if not bc.shown then
@@ -1500,12 +1524,9 @@ local function work_handle(ctx)
     if BA.pump_auto(ctx.weapon) then log("pump worked (auto: nothing to do)") return end -- (it cycles itself: no round is ejected)
     local key = weapon_key(ctx.weapon)
     if chamber[key] and a.AmmoInMagazine > 0 then
-        local done = false -- the chambered round flies out: one round less (as firing does, so the HUD shows it)
-        for _, o in ipairs(ctx.weapon:GetOwner().ReplicatedAssemblyObjects or {}) do
-            if not done and o:is_a(mag_c) then done = pcall(function() ucall(o, "ServerConsumeResource", 1) end) end
-        end
-        local b = ammo(ctx.weapon)
-        if not done or b == nil or b.AmmoInMagazine >= a.AmmoInMagazine then set_mag_rounds(ctx.weapon, a, math.max(0, rounds_left(a) - 1)) end
+        -- the chambered round flies out: one round less. Set directly: ServerConsumeResource is applied a frame later and the
+        -- ammo counter (HUD) did not follow it until the next shot; SetAmmoPercentOnAllMagazines with a changed value does
+        set_mag_rounds(ctx.weapon, a, math.max(0, rounds_left(a) - 1))
         eject_round(ctx)
         log("chambered round ejected")
         a = ammo(ctx.weapon)

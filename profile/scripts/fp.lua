@@ -34,10 +34,16 @@ local FORWARD_OFFSET_CM = 0.0
 -- animation (that would move the camera, and the weapon in the hands with it).
 local EYE_HEIGHT_TAU = 0.5 -- seconds; higher = steadier, but slower to follow crouch / cover
 local smoothed_rel_z, last_clock = nil, nil
--- dead zone on top of the low-pass: the view height is held while the smoothed height stays within EYE_DEADBAND of it
--- (walking steps and the start/stop dips leak through the low-pass as up to ~10 cm swings); a stance change eases it.
-local EYE_DEADBAND, EYE_HOLD_TAU, EYE_HOLD_PERSIST = 15, 0.25, 0.6 -- (it must stay outside the dead zone this long: walk start/stop dips are shorter)
-local eye_hold, eye_hold_moving, eye_out_t = nil, false, 0
+-- On foot the view height does NOT follow Marcus' animation (walk bob, roadie run, aiming poses): a fixed standing eye
+-- height above the capsule is learned per pawn (standing still, idle) and only the headset moves the view. The animated
+-- (low-passed) height is followed only where the game moves the head on purpose: cover, downed, mantle/vault/climb, or a
+-- capsule whose half-height differs from the standing one. The two are blended with EYE_FOLLOW_TAU.
+local EYE_FOLLOW_TAU, EYE_LEARN_TIME, EYE_FIXED_DEFAULT, EYE_FIXED_MIN, EYE_FIXED_MAX = 0.3, 5, 77, 70, 90 -- s; learned = 75th percentile of the raw height over EYE_LEARN_TIME s on foot (moving or not), clamped; EYE_FIXED_DEFAULT until then
+local EYE_FOLLOW_TAGS = { "Cover", "DBNO", "Downed", "Mantle", "Vault", "Climb" } -- (PawnState.* tags containing these; not Allow/Can)
+local eye_fixed = nil -- { rel = learned height above the capsule, hh = capsule half-height then, sum, n, t, mesh }
+local eye_follow_k, eye_follow_tags_t, eye_follow_tag = 0, 0, false
+local tag_c = api:find_uobject("Class /Script/TCGameplayTags.TCGameplayTagComponent")
+local eye_rel_cur = nil -- the height above the capsule the view uses now (view_index 0)
 
 -- Walk where the head looks. MovementOrientation only rotates gamepad stick input, so also let the head drive
 -- the player's control rotation (that is what W / the stick move along). AimMethod: 0 = game, 1 = head, 2/3 = right/left controller.
@@ -108,7 +114,7 @@ local function hide_head(pawn)
         return
     end
     hidden_for = pawn
-    eye_hold = nil
+    eye_fixed, eye_follow_k, eye_rel_cur = nil, 0, nil
 
     local meshes = ucall(pawn, "K2_GetComponentsByClass", skeletal_mesh_c)
     for _, mesh in ipairs(meshes or {}) do
@@ -410,18 +416,46 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
         -- game may reset it to nominal while CROUCH_DROP > 0), so the view follows the headset whatever the body does.
         local rel = eye_z - base.z + actual_crouch_drop(pawn)
         smoothed_rel_z = smoothed_rel_z == nil and rel or smoothed_rel_z + (rel - smoothed_rel_z) * (1 - math.exp(-dt / EYE_HEIGHT_TAU))
-        if eye_hold == nil then eye_hold = smoothed_rel_z end
-        local d = smoothed_rel_z - eye_hold
-        eye_out_t = math.abs(d) > EYE_DEADBAND and eye_out_t + dt or 0
-        if eye_out_t >= EYE_HOLD_PERSIST then eye_hold_moving, eye_out_t = true, 0 end
-        if eye_hold_moving then
-            eye_hold = eye_hold + d * (1 - math.exp(-dt / EYE_HOLD_TAU))
-            if math.abs(smoothed_rel_z - eye_hold) <= 1 then eye_hold_moving = false end
+        local hh = nil
+        pcall(function() hh = pawn.CapsuleComponent:GetScaledCapsuleHalfHeight() end)
+        if now - eye_follow_tags_t > 0.1 then
+            eye_follow_tags_t, eye_follow_tag = now, false
+            pcall(function()
+                local t = pawn:GetComponentByClass(tag_c).CachedOwnedTagContainer.GameplayTags
+                for i = 1, #t do
+                    local n = t[i].TagName:to_string()
+                    if n:find("^PawnState%.") and not n:find("Allow") and not n:find("Can") then
+                        for _, w in ipairs(EYE_FOLLOW_TAGS) do if n:find(w, 1, true) then eye_follow_tag = true end end
+                    end
+                end
+            end)
         end
+        local speed = 0
+        pcall(function() local v = pawn:GetVelocity() speed = math.sqrt(v.x * v.x + v.y * v.y) end)
+        local mesh_id = nil
+        pcall(function() mesh_id = pawn.Mesh.SkeletalMesh end)
+        if eye_fixed and mesh_id ~= nil and eye_fixed.mesh ~= nil and eye_fixed.mesh ~= mesh_id then eye_fixed = nil end -- outfit change
+        local special = eye_follow_tag
+        if eye_fixed and hh and math.abs(hh - eye_fixed.hh) > 1 then special = true end
+        if eye_fixed == nil then eye_fixed = { rel = nil, hh = hh or 0, t = 0, samples = {}, mesh = mesh_id } end
+        if eye_fixed.rel == nil and not special and dt > 0 then
+            eye_fixed.samples[#eye_fixed.samples + 1], eye_fixed.t, eye_fixed.hh = rel, eye_fixed.t + dt, hh or eye_fixed.hh
+            if eye_fixed.t >= EYE_LEARN_TIME then
+                table.sort(eye_fixed.samples)
+                local v = eye_fixed.samples[math.max(1, math.ceil(#eye_fixed.samples * 0.75))]
+                eye_fixed.rel, eye_fixed.samples = math.max(EYE_FIXED_MIN, math.min(EYE_FIXED_MAX, v)), nil
+                log(string.format("eye height learned %.1f cm (75th percentile %.1f)", eye_fixed.rel, v))
+            end
+        end
+        local fixed = eye_fixed.rel or EYE_FIXED_DEFAULT
+        local want_f = special and 1 or 0
+        eye_follow_k = eye_follow_k + (want_f - eye_follow_k) * (1 - math.exp(-dt / EYE_FOLLOW_TAU))
+        eye_rel_cur = fixed + (smoothed_rel_z - fixed) * eye_follow_k
+        FP_EYE_DBG = { raw = rel, fixed = fixed, k = eye_follow_k, speed = speed, hh = hh, tag = eye_follow_tag, cur = eye_rel_cur, base_z = base.z } -- (debug)
     end
     position.x = base.x + fwd.x * FORWARD_OFFSET_CM
     position.y = base.y + fwd.y * FORWARD_OFFSET_CM
-    position.z = base.z + (eye_hold or smoothed_rel_z or (eye_z - base.z))
+    position.z = base.z + (eye_rel_cur or smoothed_rel_z or (eye_z - base.z))
     -- on a ladder the game's own body is shown (weapon.lua LADDER) and it hangs off the capsule's centre (going down
     -- the camera sat in its chest): the view goes to its eyes, eased so the switch does not jump
     local want_k = (LADDER or os.clock() < (OFF_TURRET_UNTIL or 0)) and 1 or 0
@@ -445,7 +479,7 @@ end)
 function fp_eye_position(pawn)
     local base = ucall(pawn, "K2_GetActorLocation")
     local l, r = ucall(pawn.Mesh, "GetSocketLocation", name_eye_l), ucall(pawn.Mesh, "GetSocketLocation", name_eye_r)
-    return { x = base.x, y = base.y, z = base.z + (eye_hold or smoothed_rel_z or ((l.z + r.z) * 0.5 - base.z + actual_crouch_drop(pawn))) }
+    return { x = base.x, y = base.y, z = base.z + (eye_rel_cur or smoothed_rel_z or ((l.z + r.z) * 0.5 - base.z + actual_crouch_drop(pawn))) }
 end
 
 -- Paused (menu, game in the background): the view stays level and looking straight ahead, the way it faced when the

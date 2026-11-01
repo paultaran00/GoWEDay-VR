@@ -1104,20 +1104,24 @@ local CROSSHAIR_CLASSES = { -- the crosshair, and the focus-zone corners shown a
 local CROSSHAIR_NAMES = { BP_UIWidget_PingZones = true, DisplayedStateWidget = true } -- (DisplayedStateWidget: the aim dot) -- widgets found by name (their class path is not known)
 local widget_lib = api:find_uobject("Class /Script/UMG.WidgetBlueprintLibrary"):get_class_default_object()
 local crosshairs, crosshair_looked = {}, -10
+local AMMO_PATH = CROSSHAIR_CLASSES[3] -- the ammo panel: hidden unless VR SETTINGS has AMMO COUNTER ON
+local ammo_ws, ammo_shown = {}, false
 function hide_crosshair(pawn)
     if pawn == nil then return end
     if os.clock() - crosshair_looked > 2 then -- the HUD can be rebuilt (checkpoint, respawn): look again now and then
         crosshair_looked = os.clock()
         local found = {}
+        local ammo = {}
         for _, path in ipairs(CROSSHAIR_CLASSES) do
             pcall(function()
                 local c = api:find_uobject(path)
                 if c == nil then return end
                 local out = {}
                 ucall(widget_lib, "GetAllWidgetsOfClass", pawn, out, c, false)
-                for _, w in ipairs(out) do table.insert(found, w) end
+                for _, w in ipairs(out) do table.insert(path == AMMO_PATH and ammo or found, w) end
             end)
         end
+        ammo_ws = ammo
         -- the focus zones: a child of the HUD panel the crosshair sits in
         local crosshair_count = #found -- (zones are appended below: only look from the crosshairs themselves)
         for i = 1, crosshair_count do
@@ -1131,6 +1135,18 @@ function hide_crosshair(pawn)
             end)
         end
         crosshairs = found
+    end
+    local ammo_on = VR_SETTINGS ~= nil and VR_SETTINGS.ammo == "on"
+    if ammo_on ~= ammo_shown then -- the setting changed: show the panel again (the game drives it from there) / hide it
+        ammo_shown = ammo_on
+        for _, w in ipairs(ammo_ws) do
+            pcall(function() w:SetRenderOpacity(ammo_on and 1 or 0) w:SetVisibility(ammo_on and 4 or 2) end)
+        end
+    end
+    if not ammo_on then
+        for _, w in ipairs(ammo_ws) do
+            pcall(function() if w:GetVisibility() ~= 2 then w:SetVisibility(2) end if w:GetRenderOpacity() > 0 then w:SetRenderOpacity(0) end end)
+        end
     end
     for _, w in ipairs(crosshairs) do
         pcall(function() if w:GetVisibility() ~= 2 then w:SetVisibility(2) end end) -- ESlateVisibility::Hidden
@@ -1166,7 +1182,7 @@ do
     end
     local function med(t) table.sort(t) local n = #t return n % 2 == 1 and t[(n + 1) // 2] or (t[n // 2] + t[n // 2 + 1]) / 2 end
     -- returns yaw, err (deg), inliers, rms (cm) or nil, reason
-    function ladder_face_measure(p)
+    local function ladder_face_at(p, dz)
         local rot = p:K2_GetActorRotation()
         local yaw = rot.Yaw or rot.y
         local c = p:K2_GetActorLocation()
@@ -1175,7 +1191,7 @@ do
             local ok, l = pcall(function() return ucall(p.Mesh, "GetSocketLocation", ucall(kismet_string, "Conv_StringToName", n)) end)
             if ok and l then z, nz = z + (l.z or l.Z), nz + 1 end
         end
-        z = nz > 0 and z / nz or c.z
+        z = (nz > 0 and z / nz or c.z) + dz
         -- which way is the wall: the nearest hit of 36 traces around him (the game may have turned him 90 deg off)
         local rough, best = yaw, 1e9
         for k = 0, 35 do
@@ -1220,12 +1236,31 @@ do
         local err = math.deg(math.atan(b))
         return yaw, err, #inl, rms, rough, rough - err
     end
+    -- At the top of a ladder going down the hands are above the upper floor and see no clean wall: the same search is
+    -- repeated LADDER_FACE_DZ cm lower (into the shaft) and the first good fit wins. Returns as ladder_face_at plus the dz
+    -- used; on failure nil, "dz0: reason; dz-60: reason...", yaw. results (optional table) gets one line per height.
+    LADDER_FACE_DZ = { 0, -60, -120, -180 }
+    function ladder_face_measure(p, results)
+        local msgs, yaw0 = {}, nil
+        for _, dz in ipairs(LADDER_FACE_DZ) do
+            local yaw, err, n, rms, rough, final = ladder_face_at(p, dz)
+            yaw0 = yaw0 or yaw
+            local line
+            if yaw and n then line = string.format("dz %d: yaw %.2f rough %.0f err %.2f final %.2f inliers %d rms %.2f cm", dz, yaw, rough, err, final, n, rms)
+            else line = "dz " .. dz .. ": no fit (" .. tostring(err) .. ")" end
+            msgs[#msgs + 1] = line
+            if results then results[#results + 1] = line end
+            if yaw and n then return yaw, err, n, rms, rough, final, dz end
+        end
+        return nil, table.concat(msgs, "; "), yaw0
+    end
     function LADDER_FACE_DRY()
         local p = api:get_local_pawn(0)
         if p == nil then return "no pawn" end
-        local yaw, err, n, rms, rough, final = ladder_face_measure(p)
-        if not yaw then return "no fit: " .. tostring(err) .. " (yaw " .. tostring(n) .. ")" end
-        return string.format("yaw %.2f rough %.0f err %.2f final %.2f inliers %d rms %.2f cm", yaw, rough, err, final, n, rms)
+        local res = {}
+        local yaw, err, n, rms, rough, final, dz = ladder_face_measure(p, res)
+        if not yaw then return table.concat(res, " | ") .. " => no fit (yaw " .. tostring(n) .. ")" end
+        return table.concat(res, " | ") .. string.format(" => USED dz %d: yaw %.2f -> %.2f", dz, yaw, final)
     end
 end
 -- st = { last = last good position }. Outside the window (active false) it only follows. Returns the position to put the pawn
@@ -1300,13 +1335,13 @@ do
             if not lad then face_done = true end
             if lad and not face_done and clock - lad_t >= LADDER_FACE_DELAY then
                 face_done = true
-                local yaw, err, n, rms, rough, final = ladder_face_measure(p)
+                local yaw, err, n, rms, rough, final, dz = ladder_face_measure(p)
                 if not yaw then log("ladder: not turned (" .. tostring(err) .. ")")
                 elseif math.abs(final - yaw) % 360 < LADDER_FACE_MIN_ERR or math.abs(final - yaw) % 360 > 360 - LADDER_FACE_MIN_ERR then
                     log(string.format("ladder: not turned (already facing, yaw %.1f)", yaw))
                 else
                     p:K2_SetActorRotation(Vector3d.new(0, final, 0), false)
-                    log(string.format("ladder: turned to face the wall (yaw %.1f -> %.1f, rough %.0f, err %.1f deg, %d hits, rms %.1f cm)", yaw, final, rough, err, n, rms))
+                    log(string.format("ladder: turned to face the wall (yaw %.1f -> %.1f, rough %.0f, err %.1f deg, %d hits, rms %.1f cm, height dz %d)", yaw, final, rough, err, n, rms, dz))
                 end
             end
             last, last_lad = { x = c.x, y = c.y, z = c.z }, lad
@@ -1829,7 +1864,7 @@ log("loaded")
 -- The game's UI follows the view while playing (its objective marker / door prompts are projected through the game's
 -- camera, which turns with the head: on a UI panel fixed in the room they slid left and right as the head turned);
 -- fixed in the room while paused (menus).
-local ui_follow = nil
+local ui_follow, ui_size = nil, nil
 uevr.sdk.callbacks.on_pre_engine_tick(function()
     pcall(function()
         local pc = api:get_player_controller(0)
@@ -1837,6 +1872,9 @@ uevr.sdk.callbacks.on_pre_engine_tick(function()
         -- (a gun stand counts as playing: there the game turns the 'room' with the gun's aim and a fixed panel swung
         -- with the controller - its prompts must stay in the lower right of the view)
         local want = not paused and api:get_local_pawn(0) ~= nil and (not CINEMATIC or GROUND_TURRET == true) -- (menus without a pawn: fixed too)
+        -- HUD SIZE (VR SETTINGS): UEVR UI_Size while playing; menus (paused, cutscenes, no pawn) keep the full 2.0
+        local sz = (want and VR_SETTINGS ~= nil and ({ medium = "1.6", small = "1.3" })[VR_SETTINGS.hud]) or "2.0"
+        if sz ~= ui_size then ui_size = sz vr.set_mod_value("UI_Size", sz) end
         if want ~= ui_follow then
             ui_follow = want
             vr.set_mod_value("UI_FollowView", want and "true" or "false")

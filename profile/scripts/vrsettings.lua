@@ -9,7 +9,7 @@
 -- our widgets only).
 -- Clicks are polled: the laser click (menu.lua's MENU_SENT) over our hovered entry, the gamepad A (VRS_PAD, called from
 -- weapon.lua's xinput callback) while our entry has the focus. Never calls SetGamePaused.
--- Settings: global VR_SETTINGS = { hand = "right"|"left", turn = "smooth"|"snap", snap = 30|45|90, pump = "manual"|"auto", map = { action = physical } }
+-- Settings: global VR_SETTINGS = { hand = "right"|"left", turn = "smooth"|"snap", snap = 30|45|90, pump = "manual"|"auto", hud = "large"|"medium"|"small", ammo = "off"|"on", map = { action = physical } }
 -- (data/eday_vrsettings.lua). map: which physical button does which gameplay action (BUTTON MAPPING page, VRS_PAD).
 local api = uevr.api
 local vr = uevr.params.vr
@@ -20,7 +20,7 @@ local function log(m) pcall(function() uevr.params.functions.log_info("[vrsettin
 local FILE = "eday_vrsettings.lua"
 local DEFAULT_MAP = { interact = "lX", pause = "rB", eject = "rA", laser = "rS", sprint = "lS", gamey = "lY", cover = "none", tsprint = "lT", tacom = "none", gamemap = "none" }
 local function default_map() local m = {} for k, v in pairs(DEFAULT_MAP) do m[k] = v end return m end
-VR_SETTINGS = { hand = "right", turn = "smooth", snap = 30, pump = "manual", map = default_map() }
+VR_SETTINGS = { hand = "right", turn = "smooth", snap = 30, pump = "manual", hud = "small", ammo = "on", map = default_map() }
 local SNAP_ANGLES = { 30, 45, 90 }
 -- physical buttons (names of the Quest controllers) and the XInput bits UEVR sends for them (VR.cpp: right A = A,
 -- left X = B, right B = X, left Y = Y, stick presses = LEFT / RIGHT_THUMB); gameplay actions and the bit each is
@@ -69,7 +69,7 @@ local function vrs_save()
     if f then
         local m = {}
         for _, a in ipairs(ACTIONS) do m[#m + 1] = string.format("%s = %q", a[1], VR_SETTINGS.map[a[1]]) end
-        f:write(string.format("return { hand = %q, turn = %q, snap = %d, pump = %q, map = { %s } }\n", VR_SETTINGS.hand, VR_SETTINGS.turn, VR_SETTINGS.snap, VR_SETTINGS.pump, table.concat(m, ", ")))
+        f:write(string.format("return { hand = %q, turn = %q, snap = %d, pump = %q, hud = %q, ammo = %q, map = { %s } }\n", VR_SETTINGS.hand, VR_SETTINGS.turn, VR_SETTINGS.snap, VR_SETTINGS.pump, VR_SETTINGS.hud, VR_SETTINGS.ammo, table.concat(m, ", ")))
         f:close()
     end
 end
@@ -83,6 +83,8 @@ pcall(function()
     if t.turn == "smooth" or t.turn == "snap" then VR_SETTINGS.turn = t.turn end
     for _, a in ipairs(SNAP_ANGLES) do if t.snap == a then VR_SETTINGS.snap = a end end
     if t.pump == "manual" or t.pump == "auto" then VR_SETTINGS.pump = t.pump end
+    if t.hud == "large" or t.hud == "medium" or t.hud == "small" then VR_SETTINGS.hud = t.hud end
+    if t.ammo == "off" or t.ammo == "on" then VR_SETTINGS.ammo = t.ammo end
     if type(t.map) == "table" then -- (valid only whole: every action one known button, no button twice)
         local used, ok_map = {}, true
         for act in pairs(DEFAULT_MAP) do
@@ -174,6 +176,8 @@ local OPTIONS = {
     { key = "turn", values = { { "TURNING: SMOOTH", "smooth" }, { "TURNING: SNAP", "snap" } } },
     { key = "snap", values = { { "SNAP ANGLE: 30", 30 }, { "SNAP ANGLE: 45", 45 }, { "SNAP ANGLE: 90", 90 } } },
     { key = "pump", values = { { "SHOTGUN PUMP: MANUAL", "manual" }, { "SHOTGUN PUMP: AUTO", "auto" } } },
+    { key = "hud", values = { { "HUD SIZE: LARGE", "large" }, { "HUD SIZE: MEDIUM", "medium" }, { "HUD SIZE: SMALL", "small" } } },
+    { key = "ammo", values = { { "AMMO COUNTER: OFF", "off" }, { "AMMO COUNTER: ON", "on" } } },
 }
 local PANEL_X, PANEL_Y = 980, 300 -- (canvas units: the 1920x1080 UI; the empty right half under the chapter header)
 

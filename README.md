@@ -72,6 +72,7 @@ Spare magazines and shells come from your **chest**: reach a little below your c
 - **Breechshot:** after each shot, pull the handle on the right side back.
 - Heavy weapons reload by themselves.
 - Handles, slides and pumps don't need a full pull: once it's far enough, the controller gives a short buzz.
+- Pulling the handle with a round still in the chamber ejects that round (one round less). After a fresh magazine in an empty gun, pull it once to chamber the first round.
 
 ### Chainsaw (Chainsaw Lancer)
 Grab the folded lever on the left side of the weapon with the left grip, it stands up. Pull it back to start the saw, pull again to stop. Push the running blade into an enemy.
@@ -96,6 +97,8 @@ On the title screen, hold the left lower button.
 - **PRIMARY HAND:** right or left (left is in beta).
 - **TURNING:** smooth or snap, plus the snap angle.
 - **SHOTGUN PUMP:** manual, or auto (the Gnasher rechambers by itself).
+- **HUD SIZE:** small (default), medium or large. Small keeps the whole HUD, objectives included, in view; large makes the text bigger.
+- **AMMO COUNTER:** on (default) shows the game's ammo panel (magazine and total), off hides it.
 - **BUTTON MAPPING:** click an action, it shows WAITING FOR INPUT, then press the button you want. If that button was already used, the two actions swap. Press SPACE on the keyboard to set an action to NONE. RESET TO DEFAULTS brings the original layout back.
 
 ### If something looks off
