@@ -18,7 +18,7 @@ local function log(m) pcall(function() uevr.params.functions.log_info("[vrsettin
 
 -- settings, saved and loaded (UEVR Lua io: files in GoWEDay-Steam/data only; same pattern as arms.lua's holds) -------
 local FILE = "eday_vrsettings.lua"
-local DEFAULT_MAP = { interact = "lX", pause = "rB", eject = "rA", laser = "rS", sprint = "lS", gamey = "lY", cover = "none", tsprint = "lT" }
+local DEFAULT_MAP = { interact = "lX", pause = "rB", eject = "rA", laser = "rS", sprint = "lS", gamey = "lY", cover = "none", tsprint = "lT", tacom = "none", gamemap = "none" }
 local function default_map() local m = {} for k, v in pairs(DEFAULT_MAP) do m[k] = v end return m end
 VR_SETTINGS = { hand = "right", turn = "smooth", snap = 30, pump = "manual", map = default_map() }
 local SNAP_ANGLES = { 30, 45, 90 }
@@ -32,11 +32,12 @@ local PHYS = { { "lX", "LEFT X", 0x2000 }, { "lY", "LEFT Y", 0x8000 }, { "rA", "
 local PHYS_BIT, PHYS_NAME = {}, {}
 for _, ph in ipairs(PHYS) do PHYS_BIT[ph[1]], PHYS_NAME[ph[1]] = ph[3], ph[2] end
 PHYS_NAME.rT = "RIGHT TRIGGER" -- (label only: the left-handed name of lT)
-local ACT_BIT = { interact = 0x2000, pause = 0x4000, eject = 0x1000, laser = 0x0080, sprint = 0x0040, gamey = 0x8000, cover = 0, tsprint = 0 }
+local ACT_BIT = { interact = 0x2000, pause = 0x4000, eject = 0x1000, laser = 0x0080, sprint = 0x0040, gamey = 0x8000, cover = 0, tsprint = 0, tacom = 0, gamemap = 0 }
 -- (gamey = the game's Y: jump / mantle / climb, measured: Marcus rises 54 cm; control scheme screen)
 local ACTIONS = { -- (the rows of the mapping page, in order)
     { "interact", "INTERACT" }, { "pause", "PAUSE MENU" }, { "eject", "DROP MAGAZINE" }, { "laser", "LASER ON/OFF" },
-    { "sprint", "DASH" }, { "gamey", "JUMP" }, { "cover", "COVER (GAME)" }, { "tsprint", "SPRINT (HOLD)" } } -- (sprint = the game's dash / roadie run: weapon.lua SPRINTING)
+    { "sprint", "DASH" }, { "gamey", "JUMP" }, { "cover", "COVER (GAME)" }, { "tsprint", "SPRINT (HOLD)" },
+    { "tacom", "TAC-COM (HOLD)" }, { "gamemap", "MAP" } } -- (tacom = the game's LB, gamemap = its View / Back button: weapon.lua adds them after masking the grips) -- (sprint = the game's dash / roadie run: weapon.lua SPRINTING)
 -- UEVR's VR_SwapControllerInputs (LEFT) mirrors the buttons: the physical button that makes a role's bit is the other hand's
 -- twin (the map is stored by role = bit, so a RIGHT mapping carries over mirrored): the labels name the PHYSICAL button
 local MIRROR = { lX = "rA", rA = "lX", lY = "rB", rB = "lY", lS = "rS", rS = "lS", lT = "rT", none = "none" }
@@ -86,7 +87,7 @@ pcall(function()
         local used, ok_map = {}, true
         for act in pairs(DEFAULT_MAP) do
             local ph = t.map[act]
-            if ph == nil and (act == "cover" or act == "tsprint") then ph = DEFAULT_MAP[act] end -- (older files: today's controls)
+            if ph == nil and (DEFAULT_MAP[act] == "none" or act == "tsprint") then ph = DEFAULT_MAP[act] end -- (older files: today's controls)
             if PHYS_BIT[ph] == nil or (used[ph] and ph ~= "none") then ok_map = false break end -- (NONE may repeat)
             used[ph] = true
         end
@@ -120,6 +121,7 @@ function VRS_PAD(state)
     end
     TSPRINT_PAD = nil -- (nil: weapon.lua reads the left trigger itself; set below when the map is not the default)
     local a = (g.wButtons & 0x1000) ~= 0
+    TACOM_PAD, MAP_PAD = false, false
     COVER_PAD = false -- (the button mapped to COVER (GAME): weapon.lua sends the game's A while it is down)
     if a and not a_was then a_edge = true end
     a_was = a
@@ -141,6 +143,7 @@ function VRS_PAD(state)
             -- that protection in weapon.lua already)
             if (out & 0x4000) ~= 0 and VR_SETTINGS.map.pause ~= "rB" then pause_held_bit = PHYS_BIT[VR_SETTINGS.map.pause] end
             COVER_PAD = pr(map.cover, w, lt)
+            TACOM_PAD, MAP_PAD = pr(map.tacom, w, lt), pr(map.gamemap, w, lt)
             g.wButtons = out
         elseif pause_held_bit ~= 0 then
             if (w & pause_held_bit) ~= 0 then g.wButtons = w & ~pause_held_bit else pause_held_bit = 0 end

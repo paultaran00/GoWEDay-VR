@@ -42,6 +42,7 @@ Everything here is for right-handed play. With **PRIMARY HAND: LEFT** in VR SETT
 - **Game cover:** off by default (in VR you take cover with your body). You can put **COVER (GAME)** on any button in BUTTON MAPPING.
 - **Interact** (doors, pickups, mounted guns): left lower button, hold it when the game asks.
 - **Pause menu:** right upper button.
+- **Tac-com and map:** not on a button by default. Put **TAC-COM (HOLD)** and **MAP** on any button in BUTTON MAPPING. The map only opens in missions that have one.
 
 ### Weapons
 - The weapon is in your right hand, the right trigger fires. Aim with the barrel; there is no crosshair.
@@ -70,6 +71,7 @@ Spare magazines and shells come from your **chest**: reach a little below your c
   To aim, put your eye to the scope.
 - **Breechshot:** after each shot, pull the handle on the right side back.
 - Heavy weapons reload by themselves.
+- Handles, slides and pumps don't need a full pull: once it's far enough, the controller gives a short buzz.
 
 ### Chainsaw (Chainsaw Lancer)
 Grab the folded lever on the left side of the weapon with the left grip, it stands up. Pull it back to start the saw, pull again to stop. Push the running blade into an enemy.

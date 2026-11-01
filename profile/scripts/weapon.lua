@@ -1143,7 +1143,12 @@ LADDER_EXIT_TIME, LADDER_EXIT_MAX = 0.8, 3.0 -- s the game's body stays after th
 -- Gnasher in hand: in the frame the game adds PawnState.Ladder.Climbing it also adds its own position to the capsule's
 -- (about 2x the world position, Marcus ends up under the map; the pistol is fine). The tag appearing together with a jump
 -- of more than LADDER_JUMP_MAX cm in one tick: put him back where he was the tick before.
-LADDER_JUMP_MAX = 5000
+-- Wider (a player's ladders failed ~1 in 10, "shot into the skybox"): the same check in a window from when
+-- PawnState.ForceWalkingMovement or a Ladder tag shows up until LADDER_GUARD_AFTER s after the Ladder tag is gone, on every tick, and
+-- a speed over LADDER_SPEED_MAX cm/s (no ladder move is that fast) is zeroed and undone too. Climbing is a few cm per tick, the
+-- game's entry/exit placement < 3 m. LADDER_REC = true records per-tick lines (ring of 600) to data/ladder_rec_N.txt.
+LADDER_JUMP_MAX, LADDER_SPEED_MAX, LADDER_GUARD_AFTER = 1000, 2500, 2
+LADDER_REC = false
 -- The game turns Marcus ~14 deg off the ladder; his arms reach ~50 cm forward, so both hands land 10-16 cm right of the
 -- rails. LADDER_FACE_DELAY s after the climb starts (the game has placed him) the wall behind the ladder is measured: traces
 -- along his forward at hand height, every 5 cm across +-70 cm; rails/rungs are short outliers, the wall is a line
@@ -1223,26 +1228,73 @@ do
         return string.format("yaw %.2f rough %.0f err %.2f final %.2f inliers %d rms %.2f cm", yaw, rough, err, final, n, rms)
     end
 end
+-- st = { last = last good position }. Outside the window (active false) it only follows. Returns the position to put the pawn
+-- back to and why ("jump" / "speed"), or nil.
+function LADDER_GUARD_DECIDE(st, c, vel, active)
+    local last = st.last
+    if active and last ~= nil and last.z ~= 0 then
+        local dx, dy, dz = c.x - last.x, c.y - last.y, c.z - last.z
+        local d = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if d > LADDER_JUMP_MAX then return last, "jump", d end
+        if vel and (math.sqrt(vel.x * vel.x + vel.y * vel.y) > LADDER_SPEED_MAX or math.abs(vel.z) > LADDER_SPEED_MAX) then
+            return last, "speed", d
+        end
+    end
+    st.last = { x = c.x, y = c.y, z = c.z }
+    return nil
+end
 do
     local last, last_lad, fix_errors = nil, false, 0
     local lad_t, face_done = 0, true
+    local gst, win_until, was_act = {}, 0, false
+    local ring, rn, rec_n, rec_at = {}, 0, 0, nil
+    local function rec_write()
+        rec_n = rec_n + 1
+        local f = io.open("ladder_rec_" .. rec_n .. ".txt", "w")
+        if not f then return end
+        for i = math.max(1, rn - 599), rn do f:write(ring[(i - 1) % 600 + 1], "\n") end
+        f:close()
+        log("ladder rec written: ladder_rec_" .. rec_n .. ".txt")
+    end
     uevr.sdk.callbacks.on_pre_engine_tick(function()
         local ok, err = pcall(function()
             local p = api:get_local_pawn(0)
             if p == nil then last = nil return end
             local c = p:K2_GetActorLocation()
-            local lad = false
+            local lad, fw, names = false, false, ""
             pcall(function()
                 local t = p:GetComponentByClass(api:find_uobject("Class /Script/TCGameplayTags.TCGameplayTagComponent")).CachedOwnedTagContainer.GameplayTags
-                for i = 1, #t do if t[i].TagName:to_string():find("Ladder") then lad = true break end end
-            end)
-            if last ~= nil and lad and not last_lad and last.z ~= 0 then
-                local dx, dy, dz = c.x - last.x, c.y - last.y, c.z - last.z
-                if dx * dx + dy * dy + dz * dz > LADDER_JUMP_MAX * LADDER_JUMP_MAX then
-                    p:K2_SetActorLocation(Vector3d.new(last.x, last.y, last.z), false, {}, true)
-                    log(string.format("ladder entry threw the pawn %.0f m away: put back", math.sqrt(dx * dx + dy * dy + dz * dz) / 100))
-                    c = p:K2_GetActorLocation()
+                for i = 1, #t do
+                    local n = t[i].TagName:to_string()
+                    if n:find("Ladder") then lad = true names = names .. n .. ";" end
+                    if n:find("ForceWalkingMovement") then fw = true names = names .. n .. ";" end
                 end
+            end)
+            if lad then win_until = clock + LADDER_GUARD_AFTER elseif fw then win_until = math.max(win_until, clock + 0.2) end
+            local active = lad or fw or clock < win_until
+            local vel = nil
+            if active then pcall(function() vel = p:GetVelocity() end) end
+            local back, why, d = LADDER_GUARD_DECIDE(gst, c, vel, active)
+            local action = ""
+            if back then
+                p:K2_SetActorLocation(Vector3d.new(back.x, back.y, back.z), false, {}, true)
+                pcall(function() p.CharacterMovement.Velocity = Vector3d.new(0, 0, 0) end)
+                action = why
+                if not was_act then
+                    log(string.format("ladder guard: %s, moved %.0f cm in one tick (vel %.0f,%.0f,%.0f), put back; tags %s", why, d,
+                        vel and vel.x or 0, vel and vel.y or 0, vel and vel.z or 0, names))
+                end
+                c = p:K2_GetActorLocation()
+                if LADDER_REC and not rec_at then rec_at = clock + 3 end
+            end
+            was_act = back ~= nil
+            if LADDER_REC and (active or rec_at) then
+                rn = rn + 1
+                ring[(rn - 1) % 600 + 1] = string.format("%.3f lad=%s fw=%s cap=(%.0f,%.0f,%.0f) vel=(%.0f,%.0f,%.0f) yaw=%.1f act=%s tags=%s", clock,
+                    tostring(lad), tostring(fw), c.x, c.y, c.z, vel and vel.x or 0, vel and vel.y or 0, vel and vel.z or 0,
+                    p:K2_GetActorRotation().Yaw or 0, action, names)
+                if last_lad and not lad and not rec_at then rec_at = clock + 3 end
+                if rec_at and clock >= rec_at then rec_at = nil rec_write() end
             end
             if lad and not last_lad and last ~= nil then lad_t, face_done = clock, false end -- (not on the first tick after a reload)
             if not lad then face_done = true end
@@ -1745,6 +1797,11 @@ uevr.sdk.callbacks.on_xinput_get_state(function(retval, user_index, state)
     local masked = XINPUT_GAMEPAD_LEFT_SHOULDER
     masked = masked | XINPUT_GAMEPAD_RIGHT_SHOULDER
     state.Gamepad.wButtons = state.Gamepad.wButtons & ~masked
+    -- the buttons mapped to TAC-COM (the game's LB, held) and MAP (its View / Back button) in VR SETTINGS: the only way LB gets past the mask
+    if in_gameplay then
+        if TACOM_PAD then state.Gamepad.wButtons = state.Gamepad.wButtons | XINPUT_GAMEPAD_LEFT_SHOULDER end
+        if MAP_PAD then state.Gamepad.wButtons = state.Gamepad.wButtons | 0x0020 end
+    end
     PAD_OUT = state.Gamepad.wButtons -- (debug: what the game gets)
     -- magazine empty (only the reserve round left) or out: the trigger does nothing
     if gestures_fire_blocked ~= nil and gestures_fire_blocked() then state.Gamepad.bRightTrigger = 0 end

@@ -716,7 +716,37 @@ BA.HANDLE_HOLD = { behind = 4.0, above = 3.0, out = 3.5, tilt = 60.0, pitch = 0.
 BA.PUMP_BONE = "b_lever"
 BA.PUMP_AT = v(9.5, 1.5, -10.0)  -- weapon space: middle of the loop's wrapped tube (grab the wrapped part)
 BA.PUMP_AXIS = v(-13, 3, -5)     -- the wrapped tube's direction (claw tip (16,0,-6) -> by the grip (3,3,-11), markers)
-BA.PUMP_RADIUS = 7.0             -- cm from the hand / its fingers to it: taken
+BA.PUMP_RADIUS = 11.2             -- cm from the hand / its fingers to it: taken
+-- easier grabs / pulls: the pistol slide's and the pump's grab x1.6, other handles x1.3; a handle counts as
+-- worked at this share of its (still drawn in full) travel: pump 4.2 of 6 cm, slide / charging handles 5.6 of 7, Breechshot 7 of 9
+BA.DONE_FRAC = { pump = 0.7, rod = 7 / 9, def = 0.8 }
+function BA.done_frac(r) return r.pump and BA.DONE_FRAC.pump or (r.half and BA.DONE_FRAC.rod or BA.DONE_FRAC.def) end
+function BA.bolt_radius(bb) return BOLT_GRAB_RADIUS * (bb == "b_slide" and 1.6 or 1.3) end
+function BA.tick() pcall(function() eday_haptic(0.0, 0.05, 140, 0.8, vr.get_left_joystick_source()) end) end
+-- Switching weapons: `reload` is one table for the weapon in hand. Called when the weapon in hand is not reload.weapon:
+-- a magazine from the chest in the left hand goes back (reset_reload); a weapon whose magazine was dropped (A) is parked
+-- (BA.PARKED) and comes back as "empty" - still needing a magazine, its magazine bone still hidden - when it is equipped again.
+BA.PARKED = {}
+function BA.park_reload()
+    local w = reload.weapon
+    if reload.state == "empty" or (reload.fresh and reload.prev_state == "empty") then
+        if reload.mag ~= nil then pcall(function() ucall(reload.mag, "K2_DestroyComponent", reload.mag) end) end
+        BA.PARKED[wkey(w)] = true
+        reload = { state = "idle", weapon = nil, mag = nil, fresh = false }
+        HELD_MAG_BOX = nil
+    else
+        reset_reload()
+    end
+end
+function BA.unpark_reload(ctx, a)
+    local k = wkey(ctx.weapon)
+    if not BA.PARKED[k] then return end
+    BA.PARKED[k] = nil
+    if a ~= nil and rounds_left(a) <= 0 and reload.weapon == nil then
+        reload = { state = "empty", weapon = ctx.weapon, mag = nil, fresh = false }
+        set_weapon_mag_visible(ctx.weapon, false)
+    end
+end
 BA.PUMP_TRAVEL = 6.0             -- cm forward: worked
 BA.PUMP_ARM = 20.0               -- cm from the pivot (b_lever) to the hand's place: the loop turns by pull / arm
 BA.PUMP_REST = { "b_lever", "b_bolt", "b_lifter", "b_shell" } -- kept at rest on the drawn gun (no self-loading)
@@ -763,7 +793,7 @@ BA.OPEN = 6.0         -- cm back: open (the chamber empties, a round can go in)
 BA.CHAMBER = v(14.0, 0.0, 8.0) -- weapon space: where a round goes in (in front of the bolt, open)
 BA.INSERT_RADIUS = 8.0 -- cm from the round to the chamber: it goes in
 BA.HOLD = { out = 2.5, wrist_up = 7.0, fwd = 3.0 } -- cm: the wrist bone from the ball (out to the right, up, forward)
-BA.GRAB_RADIUS = 11.0 -- cm from the hand (or its fingers) to the ball to take it
+BA.GRAB_RADIUS = 14.3 -- cm from the hand (or its fingers) to the ball to take it
 BA.BALL_HALF = v(1.4, 1.4, 1.4) -- the ball, what thumb, index and middle finger close on
 BA.FIST_FINGER = { 75, 95, 70 }
 BA.BALL_FINGERS = { ring = BA.FIST_FINGER, pinky = BA.FIST_FINGER } -- (ring and little finger closed in the palm)
@@ -1695,9 +1725,9 @@ function BA.bolt_share(ctx, fingers)
         local side = dot(sub(fingers, bolt), wfr.y) >= 0 and 1 or -1
         if bb == "b_handle" then side = 1 end
         point = BA.knob_point(ctx.weapon, bolt, wfr, side, bb)
-        radius = BOLT_GRAB_RADIUS
+        radius = BA.bolt_radius(bb)
     end
-    local d = math.min(len(sub(fingers, point)) * BOLT_GRAB_RADIUS / BOLT_FINGER_RADIUS, len(sub(ctx.left_pos, point)))
+    local d = math.min(len(sub(fingers, point)) * (is_ba(ctx.weapon) and BOLT_GRAB_RADIUS or radius) / BOLT_FINGER_RADIUS, len(sub(ctx.left_pos, point)))
     return d / radius
 end
 -- returns true when the press was used here (so it is not a foregrip grab)
@@ -1765,7 +1795,9 @@ function gestures_left_pressed(ctx)
         local P = BA.PUMP_AT
         local point = add(wfr.pos, add(add(mul(wfr.x, P.x), mul(wfr.y, P.y)), mul(wfr.z, P.z)))
         local d = math.min(len(sub(fingers, point)), len(sub(ctx.left_pos, point)))
-        if hand_comp ~= nil and d < BA.PUMP_RADIUS then
+        local F1 = BA.FOREGRIP -- (the foregrip wins when the hand is nearer to it)
+        local d_fg = len(sub(ctx.left_pos, add(wfr.pos, add(add(mul(wfr.x, F1.x), mul(wfr.y, F1.y)), mul(wfr.z, F1.z)))))
+        if hand_comp ~= nil and d < BA.PUMP_RADIUS and d < d_fg then
             -- the hand under the weapon, palm up, its fingers across to the right through the loop and round its
             -- lower bar (hand bone axes: x along the fingers, y back of the hand, z towards the little finger)
             local hs = BA.hs()
@@ -1806,8 +1838,11 @@ function gestures_left_pressed(ctx)
             side = 1
             point = ba_ball(bolt, wfr, ba_state(ctx.weapon))
         end
-        local d_bolt = math.min(len(sub(fingers, point)) * BOLT_GRAB_RADIUS / BOLT_FINGER_RADIUS, len(sub(ctx.left_pos, point)))
-        if hand_comp ~= nil and ((ba and d_bolt < BA.GRAB_RADIUS) or (not ba and d_bolt < BOLT_GRAB_RADIUS and d_bolt < len(sub(ctx.left_pos, wf.pos)))) then
+        local Rb = BA.bolt_radius(bb)
+        local F0 = BA.FOREGRIP
+        local d_fg = len(sub(ctx.left_pos, add(wfr.pos, add(add(mul(wfr.x, F0.x), mul(wfr.y, F0.y)), mul(wfr.z, F0.z)))))
+        local d_bolt = math.min(len(sub(fingers, point)) * (ba and BOLT_GRAB_RADIUS or Rb) / BOLT_FINGER_RADIUS, len(sub(ctx.left_pos, point)))
+        if hand_comp ~= nil and ((ba and d_bolt < BA.GRAB_RADIUS) or (not ba and d_bolt < Rb and d_bolt < len(sub(ctx.left_pos, wf.pos)) and d_bolt < d_fg)) then
             -- one set hold, the same every time (hand bone axes: x along the fingers, y back of the hand, z towards
             -- the little finger; knuckles ~10 cm along x, their middle ~1.5 cm towards the index):
             --  left side: palm down above and behind the knob, fingers forward, index and middle hooking over its front
@@ -2046,6 +2081,8 @@ end
 
 gestures_update_inner = function(ctx)
     LAST_GESTURE_WF = ctx.weapon_frame
+    if reload.weapon ~= nil and reload.weapon ~= ctx.weapon then BA.park_reload() end -- (a reload of the OTHER weapon must not block this one)
+    if next(BA.PARKED) ~= nil then BA.unpark_reload(ctx, ammo(ctx.weapon)) end
     TRIGGER_WEAPON = ctx.weapon
     if gestures_eject_request then
         gestures_eject_request = false
@@ -2227,8 +2264,9 @@ gestures_update_inner = function(ctx)
                 end
             end
         end
-        if not rack.done and rack.pulled >= (rack.travel or BOLT_TRAVEL) then
+        if not rack.done and rack.pulled >= (rack.travel or BOLT_TRAVEL) * BA.done_frac(rack) then
             rack.done = true
+            BA.tick()
             BA.snd_post(ctx.weapon, "hopen")
             work_handle(ctx)
         elseif rack.done and rack.pulled < (rack.travel or BOLT_TRAVEL) * 0.3 then
