@@ -496,6 +496,7 @@ end)
 -- control passed to the gun, plus the eye's half of the eye distance) - nothing of the game's camera in it.
 local hmd_pos_v, hmd_rot_q = UEVR_Vector3f.new(), UEVR_Quaternionf.new()
 local IPD = 0.064 -- m
+local lad_org_v = UEVR_Vector3f.new()
 local function qrot(q, x, y, z)
     local tx, ty, tz = 2 * (q.y * z - q.z * y), 2 * (q.z * x - q.x * z), 2 * (q.x * y - q.y * x)
     return x + q.w * tx + (q.y * tz - q.z * ty), y + q.w * ty + (q.z * tx - q.x * tz), z + q.w * tz + (q.x * ty - q.y * tx)
@@ -564,6 +565,23 @@ end
 
 uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_index, world_to_meters, position, rotation, is_double)
     if VEHICLE and turret_view.pawn ~= nil and not TURRET_VIEW_DEV_OFF then pcall(turret_final, view_index, world_to_meters, position, rotation) return end
+    -- ladder: the game's body is fixed on the ladder, so a physical step since the last recenter showed as the view off
+    -- the neck. Take the headset's HORIZONTAL offset from the standing origin back out (the way UEVR added it: turned by
+    -- the view's world yaw minus the headset's own yaw in the room), scaled by ladder_eye_k so it eases in/out with the eye move. Height and head turn untouched.
+    local lk = ladder_eye_k or 0
+    if lk > 0.001 and not CINEMATIC then
+        pcall(function()
+            local vr = uevr.params.vr
+            vr.get_pose(vr.get_hmd_index(), hmd_pos_v, hmd_rot_q)
+            vr.get_standing_origin(lad_org_v)
+            local d = to_ue(hmd_pos_v.x - lad_org_v.x, 0, hmd_pos_v.z - lad_org_v.z)
+            local hf = to_ue(qrot(hmd_rot_q, 0, 0, -1))
+            local a = math.rad(rotation.y) - math.atan(hf.y, hf.x)
+            local ca, sa = math.cos(a), math.sin(a)
+            position.x = position.x - lk * world_to_meters * (d.x * ca - d.y * sa)
+            position.y = position.y - lk * world_to_meters * (d.x * sa + d.y * ca)
+        end)
+    end
     -- (never in a cutscene: there the game's camera leads, and a pause reported for a frame jerked the view)
     -- (debug only now: with the view locked, the world followed the head in the pause menu and the menu seemed to move)
     if not paused or CINEMATIC or not PAUSE_LEVEL_LOCK then

@@ -59,7 +59,7 @@ local WORLD_SPACE = 0 -- EBoneSpaces::WorldSpace
 
 -- Tuning (cm)
 -- Where the neck goes relative to the eyes: Marcus' armour collar is big, the eyes must clear it.
-local NECK_BEHIND_CAMERA = 10.0
+local NECK_BEHIND_CAMERA = 13.0 -- (10: looking down at the chest showed the inside of the neck)
 local NECK_BELOW_CAMERA = 15.0
 -- When the controllers are further out than Marcus' arms reach, the body leans after them (up to this much)
 -- instead of stretching the arms.
@@ -427,6 +427,72 @@ local function set_bone(comp, bone, frame)
     ucall(comp, "SetBoneLocationByName", fname(bone), Vector3d.new(frame.pos.x, frame.pos.y, frame.pos.z), WORLD_SPACE)
 end
 
+-- Real crouch, the drawn body: the body follows the eyes down, so the copy's legs sank into the floor straight (and the
+-- animation's walking stride, with the pelvis low, drove the feet into the chest). The hips stay down; each foot is
+-- put on the floor relative to the pelvis in the body's frame: a squat stance (feet FRONT cm ahead per cm of drop, so the
+-- pelvis ends up behind the ankles, and wider apart), the animation's stride / step lift scaled down with the drop.
+-- thigh -> calf -> foot are then a two-bone leg, the knee pointing forward and outwards. All in BA-like local table
+-- (the file is near Lua's 200-locals limit).
+local CROUCH_LEG = { front = 0.35, front_max = 25, stance = 14, stride_end = 50, knee_out = 22, lift_max = 8, rest = 13.5, hip_min = 24 }
+local function crouch_legs(comp, leader, floor_z, origin_z, fwd, right, drop)
+    local K = CROUCH_LEG
+    local s = math.max(0, 1 - drop / K.stride_end) -- stride kept
+    local pel = copy_bone_frame(comp, "b_pelvis").pos
+    local up = v(0, 0, 1)
+    for _, side in ipairs({ "L", "R" }) do
+        local sg = (side == "R") and 1 or -1
+        local th, ca, ft = copy_bone_frame(comp, "b_thigh_" .. side), copy_bone_frame(comp, "b_calf_" .. side), copy_bone_frame(comp, "b_foot_" .. side)
+        -- a deep crouch brings the hips to the floor (or under it): the hip joint stays at least hip_min above it, the
+        -- legs fold into a valid deepest squat (the thigh keeps its skin; the pelvis mesh is hidden behind the torso)
+        local th0 = th
+        local lift_hip = math.max(0, floor_z + K.hip_min - th.pos.z)
+        if lift_hip > 0 then th = { pos = add(th.pos, v(0, 0, lift_hip)), x = th.x, y = th.y, z = th.z } end
+        local rel = sub(ft.pos, pel)
+        local af, ar = dot(rel, fwd), dot(rel, right) -- animated foot in the body's frame
+        local tf = math.min(K.front * drop, K.front_max) + af * s
+        local tr = ar * s + sg * K.stance * (1 - s)
+        local ank_h = bone_frame(leader, "b_foot_" .. side).pos.z - origin_z
+        local rest = K.rest -- (the standing ankle height above the floor, measured)
+        local lift = math.max(0, math.min(K.lift_max, (ank_h - rest) * s))
+        local target = add(add(v(pel.x, pel.y, floor_z + rest + lift), mul(fwd, tf)), mul(right, tr))
+        local l1, l2 = len(sub(ca.pos, th0.pos)), len(sub(ft.pos, ca.pos))
+        local to = sub(target, th.pos)
+        local d = math.max(math.min(len(to), l1 + l2 - 0.5), math.abs(l1 - l2) + 0.5)
+        local dir = norm(to)
+        local a = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+        local h = math.sqrt(math.max(0, l1 * l1 - a * a))
+        -- the knee turns on a circle round the hip-ankle line: the angle is searched (never from a pole direction, which
+        -- flipped the knee backwards / into the floor once the hips were low): in front of the hip, out about KNEE_OUT cm
+        -- from the pelvis line, not above the hip much, never into the floor
+        local e1 = sub(fwd, mul(dir, dot(fwd, dir)))
+        e1 = len(e1) > 1e-3 and norm(e1) or norm(cross(dir, right))
+        local e2 = cross(dir, e1)
+        local best, knee = 1e9, nil
+        for k = 0, 35 do
+            local an = k * math.pi / 18
+            local c = add(add(th.pos, mul(dir, a)), mul(add(mul(e1, math.cos(an)), mul(e2, math.sin(an))), h))
+            local kf, ko, kz = dot(sub(c, th.pos), fwd), dot(sub(c, pel), right) * sg, c.z
+            local cost = -kf + 0.8 * math.abs(ko - K.knee_out) + math.max(0, kz - (th.pos.z + 30))
+            if kz < floor_z + 12 then cost = cost + 100 + (floor_z + 12 - kz) end
+            if kf < 5 then cost = cost + 100 + (5 - kf) end
+            if cost < best then best, knee = cost, c end
+        end
+        local ankle = add(th.pos, mul(dir, d))
+        local s1 = swing(norm(sub(ca.pos, th0.pos)), norm(sub(knee, th.pos)))
+        local thigh = { pos = th.pos, x = s1(th.x), y = s1(th.y), z = s1(th.z) }
+        local s2 = swing(norm(sub(ft.pos, ca.pos)), norm(sub(ankle, knee)))
+        local calf = { pos = knee, x = s2(ca.x), y = s2(ca.y), z = s2(ca.z) }
+        set_bone(comp, "b_thigh_" .. side, thigh)
+        set_bone(comp, "b_calf_" .. side, calf)
+        set_bone(comp, "b_foot_" .. side, { pos = ankle, x = ft.x, y = ft.y, z = ft.z })
+        if CROUCH_REC then -- (debug: one row per frame and side, arms-time world positions)
+            table.insert(CROUCH_REC, { side = side, pel = pel, ankle = ankle, floor = floor_z, spine = copy_bone_frame(comp, "b_spine_03").pos,
+                fwd = fwd, right = right, t = os.clock(), anim = rel, raw_h = ank_h })
+        end
+        if CROUCH_LEG_DBG then CROUCH_LEG_DBG[side] = { floor = floor_z, pelvis = pel, th = th.pos, knee = knee, ankle = ankle, target = target, fwd = fwd, right = right } end
+    end
+end
+
 -- Where each hand sits on the weapon, taken once per weapon from the game's pose (it sways with the walk animation;
 -- the hands must stay where the controllers hold the weapon).
 local grips = {}
@@ -749,6 +815,9 @@ local function update_arms(pawn, weapon, left_weapon, cam, weapon_object, left_h
     if #state.copies == 0 then return end
 
     local leader = pawn.Mesh
+    -- debug (tests only): CROUCH_TEST makes sprint.lua force the drop; the headset can't go down, so the eye is set to the standing height (73.5 above the capsule centre) minus the drop and sprint.lua's dead zone (10) here
+    if rawget(_G, "CROUCH_TEST") and CROUCH_DROP > 0 and not rawget(_G, "CROUCH_NOEMU") then cam = { pos = v(cam.pos.x, cam.pos.y, actor_frame(pawn).pos.z + 73.5 - CROUCH_DROP - 10), f = cam.f, r = cam.r } end
+    if CROUCH_LEG_DBG then CROUCH_LEG_DBG.cam_z, CROUCH_LEG_DBG.cam = cam.pos.z, cam end
     local _t = os.clock()
     local function SEC(name) if PROF_SEC then PROF_SEC(name, os.clock() - _t) end _t = os.clock() end
     local frames = {}
@@ -973,6 +1042,7 @@ local function update_arms(pawn, weapon, left_weapon, cam, weapon_object, left_h
     local body_rot = Vector3d.new(mesh_rot.x, mesh_rot.y + math.deg(angle), mesh_rot.z)
     local copy_pos = v(mesh_loc.x + offset.x, mesh_loc.y + offset.y, mesh_loc.z + offset.z)
     state.place = { pos = sub(copy_pos, actor_frame(pawn).pos), rot = body_rot }
+    if CROUCH_LEG_DBG then CROUCH_LEG_DBG.off = { offset.x, offset.y, offset.z, want.z, neck.z, mesh_loc.z, frames.b_neck.pos.z } end
     SEC("arms: IK")
     for _, c in ipairs(state.copies) do
       ucall(c.copy, "K2_SetWorldLocationAndRotation", Vector3d.new(mesh_loc.x + offset.x, mesh_loc.y + offset.y, mesh_loc.z + offset.z), body_rot, false, {}, true)
@@ -1129,6 +1199,8 @@ local function update_arms(pawn, weapon, left_weapon, cam, weapon_object, left_h
             end
         end
         SEC("arms: fingers")
+        if CROUCH_DROP > 1 then local ok_l, err_l = pcall(crouch_legs, c.copy, leader, actor_frame(pawn).pos.z + (CROUCH_MESH_BASE_Z or -85), mesh_loc.z, cam.f, cam.r, CROUCH_DROP)
+            if not ok_l then log("crouch legs: " .. tostring(err_l)) end end
       end
         if TEST_COLLAPSE ~= nil then -- temporary render test: shrink a bone's subtree, keep the hands normal size
             ucall(c.copy, "SetBoneScaleByName", fname(TEST_COLLAPSE), Vector3d.new(0.001, 0.001, 0.001), WORLD_SPACE)
@@ -1207,7 +1279,7 @@ local function refresh_attachments(pawn, equipped)
             -- floats beside the camera, until the game moves it onto the back
             local sname = socket:to_string()
             local on_back = root ~= equipped and (HIDDEN_ON_SOCKETS[sname] == true or sname:find("weapon") ~= nil)
-            if on_back and hidden_actors[actor] ~= sname then
+            if on_back and (hidden_actors[actor] ~= sname or has_visible_parts(actor)) then -- (visible again although hidden by us: the game shows it after a cutscene)
                 -- hidden again on every socket change: the game shows a weapon when it hangs it on the back
                 set_actor_hidden(actor, true)
                 hidden_actors[actor] = sname
@@ -1231,7 +1303,7 @@ local function refresh_attachments(pawn, equipped)
                     end
                     attachment_rel[root] = known
                 end
-                table.insert(list, { root = root, parent = parent, socket = socket, rel = known.rel })
+                table.insert(list, { root = root, parent = parent, socket = socket, rel = known.rel, holster = sname == "socket_holster" })
             end
         end
     end
@@ -1277,6 +1349,7 @@ function place_attachments(pawn, equipped)
             pcall(function()
                 local px, py, pz = rotator_axes(ucall(e.parent, "GetSocketRotation", e.socket))
                 local placed = compose({ pos = copy(ucall(e.parent, "GetSocketLocation", e.socket)), x = px, y = py, z = pz }, e.rel)
+                if EDAY_LEFTY == true and e.holster and LH ~= nil then placed = LH.mirror_holster(placed, leader) end -- (lefthand.lua: the pistol on the left hip)
                 local moved = rotate_frame(placed, turn, pivot, body.offset)
                 if RIG_FIX ~= nil then moved = compose(RIG_FIX.to, relative(RIG_FIX.from, moved)) end -- as the arms
                 local rot = rot_from_xz(Vector3d.new(moved.x.x, moved.x.y, moved.x.z), Vector3d.new(moved.z.x, moved.z.y, moved.z.z))
@@ -1337,6 +1410,7 @@ function arms_cinematic(pawn, on)
         attach_list, attach_frame = {}, ATTACH_REFRESH -- looked at again when play resumes
     else
         pcall(arms_relink_followers, true) -- play resumes: the drawn body follows our pose again
+        attach_frame = ATTACH_REFRESH -- back weapons hidden again at once
     end
 end
 
@@ -1380,8 +1454,47 @@ function arms_is_source(comp) -- (weapon.lua offbody: the meshes of the game's b
     return false
 end
 
+function arms_leg_dbg() -- (debug: world positions of the drawn body's leg bones)
+    local c, out = state.copies[1] and state.copies[1].copy, {}
+    for _, b in ipairs({ "b_pelvis", "b_thigh_L", "b_calf_L", "b_foot_L", "b_thigh_R", "b_calf_R", "b_foot_R", "b_ball_L" }) do
+        local p = ucall(c, "GetBoneLocationByName", fname(b), WORLD_SPACE)
+        out[b] = { p.x, p.y, p.z }
+    end
+    local lead = state.pawn and state.pawn.Mesh
+    for _, b in ipairs({ "b_pelvis", "b_neck", "b_foot_L" }) do
+        local q = ucall(lead, "GetSocketLocation", fname(b)) local p = ucall(c, "GetBoneLocationByName", fname(b), WORLD_SPACE)
+        out["leader_" .. b] = { q.x, q.y, q.z } out["copy_" .. b] = { p.x, p.y, p.z }
+    end
+    return out
+end
+
 function arms_left_hand_component()
     return state.copies[1] and state.copies[1].copy or nil
+end
+
+-- The drawn chest (b_spine_03 of the posed copy; its bone axes: x up, y back, z left) as body axes, world: {pos, fwd, right, up}.
+-- Things that must stay ON the chest (gestures.lua pouch magazine, grenade.lua) are placed from this, after
+-- arms_replace_copies has put the copy where it is drawn this frame, so they move with the body exactly.
+function arms_chest_frame()
+    local c = state.copies[1] and state.copies[1].copy
+    if c == nil then return nil end
+    local ok, f = pcall(copy_bone_frame, c, "b_spine_03")
+    if not ok or f == nil then return nil end
+    return { pos = f.pos, fwd = mul(f.y, -1), right = mul(f.z, -1), up = f.x }
+end
+
+-- true while Marcus wears the casual outfit (jacket / shirt, early missions): the copy's skinned asset is Hero_MarcusCasual_*.
+-- ARMS_FORCE_ARMOUR = true (debug) treats it as armour. Chest items use their own offsets then.
+function arms_outfit_casual()
+    if ARMS_FORCE_ARMOUR then return false end
+    local c = state.copies[1]
+    if c == nil then return false end
+    if c.casual == nil then
+        local ok, n = pcall(function() return c.asset:get_fname():to_string() end)
+        if not ok then return false end
+        c.casual = n:find("Casual") ~= nil
+    end
+    return c.casual
 end
 
 local errors = 0

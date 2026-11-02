@@ -10,8 +10,9 @@ local vr = uevr.params.vr
 local function log(m) pcall(function() uevr.params.functions.log_info("[grenade] " .. tostring(m)) end) end
 
 GRENADE = GRENADE or {
-    body = { fwd = 18, right = 14, up = -55 }, -- cm from the eyes on the head's flat facing: right of the belt, in front of the hip
-    grab_radius = 10,      -- cm from the left hand to it: taken
+    body = { fwd = 18, right = 14, up = -55 }, -- cm from the eyes on the head's flat facing: right of the belt, in front of the hip (fallback: no drawn body)
+    chest = { fwd = 26, right = 10, up = 0, pitch = 20 }, -- cm from the drawn chest bone (b_spine_03, body axes; right mirrored): the handle's grip point, on the armour
+    grab_radius = 13,      -- cm from the hand to the drawn grenade (its axis, handle end to ball top): taken
     fuse = 4.0,            -- s from the pin pulled (left trigger)
     throw_gain = 1.3,      -- the hand's speed times this (a real throw also has the wrist's snap)
     in_hand = { x = 9.0, y = -4.5, z = 0.0 },   -- (unused since the hold is worked out from the finger bones)
@@ -178,7 +179,17 @@ local function place_parts(pos, x, z)
     end
 end
 
+G.chest_casual = { fwd = 20.5, right = 10, up = 0, pitch = 20 } -- the casual jacket (thinner than the armour: same spot, closer in)
+function grenade_chest_tune(t) for k, x in pairs(t) do if k:sub(1, 7) == "casual_" then G.chest_casual[k:sub(8)] = x else G.chest[k] = x end end end -- (debug: tuning)
 local function body_frame(ctx)
+    local cf = arms_chest_frame and arms_chest_frame()
+    if cf ~= nil and ctx.cam_pos ~= nil and len(sub(cf.pos, ctx.cam_pos)) < 120 then
+        -- rigid on the drawn chest (its axes: leans and sways with the animation); G.body.right's sign = the side
+        local C, s = (arms_outfit_casual and arms_outfit_casual()) and G.chest_casual or G.chest, G.body.right < 0 and -1 or 1
+        local cp, sp = math.cos(math.rad(C.pitch)), math.sin(math.rad(C.pitch)) -- (the armour's front leans back against the bone's up)
+        return add(cf.pos, add(add(mul(cf.fwd, C.fwd), mul(cf.right, C.right * s)), mul(cf.up, C.up))),
+               add(mul(cf.fwd, cp), mul(cf.up, sp)), sub(mul(cf.up, cp), mul(cf.fwd, sp))
+    end
     local f = ctx.cam_fwd
     local r = v(-f.y, f.x, 0)
     local B = G.body
@@ -299,12 +310,29 @@ local function find_projectile(pawn)
     return found
 end
 
+-- distance from a hand to the grenade AS DRAWN on the chest: the nearest point of its axis (mesh z -17.9 handle end .. 20.1
+-- ball top), so a fist on the ball or on the handle both reach it (the old test measured to the handle's grip point only)
+local function grab_dist(ctx, pos)
+    local p, _, up = body_frame(ctx)
+    local o = add(p, mul(up or v(0, 0, 1), -G.grip_z)) -- the mesh origin
+    up = up or v(0, 0, 1)
+    local a, b = add(o, mul(up, -17.9)), add(o, mul(up, 20.1))
+    local ab = sub(b, a)
+    local t = math.max(0, math.min(1, ((pos.x - a.x) * ab.x + (pos.y - a.y) * ab.y + (pos.z - a.z) * ab.z) / (ab.x * ab.x + ab.y * ab.y + ab.z * ab.z)))
+    return len(sub(pos, add(a, mul(ab, t))))
+end
+-- the pouch magazine beside it is taken instead when the hand is nearer to that
+local function pouch_nearer(ctx, pos, d)
+    local pd = gestures_pouch_dist and gestures_pouch_dist(pos)
+    return pd ~= nil and pd < d
+end
+
 -- weapon.lua: the left grip pressed / let go (true: taken here)
 function grenade_left_pressed(ctx)
     init()
     if st.state ~= "body" or not st.on_body then return false end
-    local p = body_frame(ctx)
-    if len(sub(ctx.left_pos, p)) > G.grab_radius then return false end
+    local d = grab_dist(ctx, ctx.left_pos)
+    if d > G.grab_radius or pouch_nearer(ctx, ctx.left_pos, d) then return false end
     st.state, st.armed_at, st.hist, st.side = "hand", nil, {}, "L"
     haptic(0.3)
     log("taken (left hand)")
@@ -331,8 +359,8 @@ end
 function grenade_right_pressed(ctx)
     init()
     if st.state ~= "body" or not st.on_body or not RIGHT_FREE or ctx.right_pos == nil then return false end
-    local p = body_frame(ctx)
-    if len(sub(ctx.right_pos, p)) > G.grab_radius then return false end
+    local d = grab_dist(ctx, ctx.right_pos)
+    if d > G.grab_radius or pouch_nearer(ctx, ctx.right_pos, d) then return false end
     st.state, st.armed_at, st.hist, st.side = "hand", nil, {}, "R"
     haptic(0.3)
     log("taken (right hand)")
@@ -377,9 +405,10 @@ function grenade_update(ctx)
         st.on_body = item ~= nil and st.count > 0 and not CINEMATIC
         show_parts(st.on_body)
         if st.on_body then
-            local p, f = body_frame(ctx)
+            local p, f, up = body_frame(ctx)
+            up = up or v(0, 0, 1)
             st.body_pos = p -- (debug)
-            place_parts(add(p, v(0, 0, -G.grip_z)), f, v(0, 0, 1)) -- hanging upright, ball up (the mesh's z is its length); p = the handle's grip point
+            place_parts(add(p, mul(up, -G.grip_z)), f, up) -- hanging upright, ball up (the mesh's z is its length); p = the handle's grip point
         end
     elseif st.state == "hand" then
         show_parts(true)

@@ -24,7 +24,7 @@ A full first-person VR mod for **Gears of War: E-Day** (PC), built on a patched
 
 1. Download the latest zip from [Releases](../../releases) and unzip it anywhere.
 2. Run `GoWEDay_VR.exe`, pick the game folder or exe, tick Windowed if you want a window, pick the VR runtime (SteamVR, or Virtual Desktop's VDXR), press **Start**.
-3. On the title screen, **hold X** (left controller) to enter offline mode.
+3. On the title screen, **hold X** (left controller lower button) to enter offline mode.
 4. In game, the mod's options are in **VR SETTINGS** in the pause menu. `Insert` on the keyboard opens the UEVR menu (advanced).
 
 To update, unzip the new version and press **Start** again: the launcher refreshes the mod's files every time and keeps your settings.
@@ -33,7 +33,7 @@ Some antivirus programs flag the launcher because it injects the mod into the ga
 
 ## How to play
 
-Buttons below are named by where they are on the controller: **lower / upper face button** and **stick press**. In VR SETTINGS > BUTTON MAPPING they show as LEFT X / LEFT Y / RIGHT A / RIGHT B (left lower / left upper / right lower / right upper).
+Buttons: **X** (left controller lower button), **Y** (left controller upper button), **A** (right controller lower button), **B** (right controller upper button). These are the defaults; you can change them in VR SETTINGS > BUTTON MAPPING.
 Everything here is for right-handed play. With **PRIMARY HAND: LEFT** in VR SETTINGS everything is mirrored.
 
 ### Moving
@@ -41,11 +41,11 @@ Everything here is for right-handed play. With **PRIMARY HAND: LEFT** in VR SETT
 - **Turn:** right stick (smooth, or snap in VR SETTINGS).
 - **Sprint:** hold the left trigger while walking.
 - **Dash / roadie run:** press the left stick.
-- **Jump / mantle / climb:** left upper button.
-- **Crouch:** crouch for real. Marcus goes down with you, and enemies can't see you behind low cover.
+- **Jump / mantle / climb:** Y (left controller upper button).
+- **Crouch:** crouch for real. Marcus crouches with you (legs bent), and enemies can't see you behind low cover.
 - **Game cover:** off by default (in VR you take cover with your body). You can put **COVER (GAME)** on any button in BUTTON MAPPING.
-- **Interact** (doors, pickups, mounted guns): left lower button, hold it when the game asks.
-- **Pause menu:** right upper button.
+- **Interact** (doors, pickups, mounted guns): X (left controller lower button), hold it when the game asks.
+- **Pause menu:** B (right controller upper button).
 - **Tac-com and map:** not on a button by default. Put **TAC-COM (HOLD)** and **MAP** on any button in BUTTON MAPPING. The map only opens in missions that have one.
 
 ### Weapons
@@ -53,7 +53,7 @@ Everything here is for right-handed play. With **PRIMARY HAND: LEFT** in VR SETT
 - **Two hands:** grab the front of the weapon with the left grip. It's steadier and more accurate (shotgun pellets spread half as much).
 - **Pistol with two hands:** cup the bottom of the grip with your left palm and squeeze the left grip.
 - **Switch to the pistol:** right grip at your right hip.
-- **Rifle / shotgun from your back:** right grip over your **left** shoulder. With two long weapons on your back, the first grab gives one, grab again for the other.
+- **Rifle / shotgun from your back:** right grip over your **left** shoulder (also with an empty hand). With two long weapons on your back, the first grab gives one, grab again for the other.
 - **Put the weapon away** (free right hand): right grip over your **right** shoulder. Do it again to take it back.
 - **Laser:** right stick press, or touch the laser switch on the side of the weapon with your left index finger and squeeze the left grip.
 - **Melee:** swing the weapon into an enemy, or punch with your left fist (left grip held, empty hand).
@@ -61,7 +61,7 @@ Everything here is for right-handed play. With **PRIMARY HAND: LEFT** in VR SETT
 ### Reloading
 Spare magazines and shells come from your **chest**: reach a little below your chin with the left hand and squeeze the left grip.
 - **Magazine weapons:**
-  1. Grab the magazine with the left grip and pull it out, or press the right lower button to drop it.
+  1. Grab the magazine with the left grip and pull it out, or press A (right controller lower button) to drop it.
   2. Take a new one from your chest.
   3. Push it into the magazine well.
   4. If you fired the weapon empty, pull the charging handle (pistol: the slide) back.
@@ -90,15 +90,15 @@ Grab the folded lever on the left side of the weapon with the left grip, it stan
 ### Mounted guns
 - **Get on:** hold the interact button next to the gun.
 - **Aim and fire:** aim with the right controller, fire with the right trigger.
-- **Get off:** hold the right upper button.
+- **Get off:** hold B (right controller upper button).
 - **Tear it off and carry it:** hold both grips and yank both hands up.
 
 ### Menus
 Point with the lasers from your controllers and click with a trigger. The right stick scrolls.
-On the title screen, hold the left lower button.
+On the title screen, hold X (left controller lower button).
 
 **VR SETTINGS** (pause menu, above SETTINGS):
-- **PRIMARY HAND:** right or left (left is in beta).
+- **PRIMARY HAND:** right or left.
 - **TURNING:** smooth or snap, plus the snap angle.
 - **SHOTGUN PUMP:** manual, or auto (the Gnasher rechambers by itself).
 - **HUD SIZE:** small (default), medium or large. Small keeps the whole HUD, objectives included, in view; large makes the text bigger.
@@ -137,7 +137,6 @@ The mod is a **work in progress**. Bugs and unfinished parts are expected.
 
 - So far it has been played and tested **only as Marcus** in the campaign. Other playable characters or sections
   may not work correctly yet.
-- Left-handed mode is in **beta**.
 - Tested on the Steam version only; the Xbox app version is untested.
 - A game update can break the mod until it is updated.
 

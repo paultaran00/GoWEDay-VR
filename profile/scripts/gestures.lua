@@ -507,7 +507,9 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Chest pouch: a magazine of the equipped weapon on the chest (in the CHEST zone), the one the hand takes. It is
 -- there while there is spare ammo and it is not in the hand; it can always be taken, put back, or thrown away.
-local POUCH = { fwd = 10, right = -5, up = -42, side = 1 } -- cm from the eyes on the head's flat facing: the magazine's top
+local POUCH = { fwd = 10, right = -5, up = -42, side = 1, -- cm from the eyes on the head's flat facing: the magazine's top (fallback when no drawn body)
+              chest = { fwd = 25.5, right = -5, up = 12, pitch = 20 }, round_out = -2.0 } -- round_out: a single round's axis this far out of the magazine's frame (negative: on the armour, along the chest's own up) -- cm from the drawn chest bone (b_spine_03, body axes; right mirrored by side): on the armour
+POUCH.chest_casual, POUCH.round_out_casual = { fwd = 20, right = -5, up = 12, pitch = 20 }, -2.0 -- the casual outfit (jacket): measured on it
 local pouch = nil -- { comp, weapon, shown }
 -- left-handed (aa_xr.lua eday_on_hand): the weapon hand's hip (own side) and the shoulder across it, the pouch on the other side
 eday_on_hand(function(left)
@@ -527,6 +529,19 @@ local POUCH_ON_CHEST = { fwd = 22.9, right = 5.9, up = -0.3 } -- cm from the che
 local function pouch_frame(ctx)
     -- on the chest of the drawn body (its facing, not the camera's: that turns with the weapon's aim)
     local body
+    local cf = arms_chest_frame and arms_chest_frame()
+    if cf ~= nil and len(sub(cf.pos, ctx.cam_pos)) < 120 then -- (not posed yet / stale: the eyes' way below)
+        -- rigid on the drawn chest: its axes (so it also leans / sways with the animation), the wide side to the chest
+        -- (the armour's front leans back by C.pitch deg against the bone's up: the magazine lies along it)
+        local C = (arms_outfit_casual and arms_outfit_casual()) and POUCH.chest_casual or POUCH.chest
+        local cp, sp = math.cos(math.rad(C.pitch)), math.sin(math.rad(C.pitch))
+        local up = sub(mul(cf.up, cp), mul(cf.fwd, sp))
+        local out = add(mul(cf.fwd, cp), mul(cf.up, sp))
+        local fr = { pos = add(cf.pos, add(add(mul(cf.fwd, C.fwd), mul(cf.right, C.right * POUCH.side)), mul(cf.up, C.up))),
+                     x = mul(cf.right, POUCH.side), y = mul(out, -POUCH.side), z = up }
+        fr.out = out
+        return fr
+    end
     local hc = arms_left_hand_component and arms_left_hand_component()
     local ok = hc ~= nil and pcall(function()
         -- the body's facing (follows the head, not the weapon), from the eyes: leaning towards the hands does not move it
@@ -545,6 +560,7 @@ local function pouch_frame(ctx)
     local rel = { pos = v(0, 0, 0), x = v(1, 0, 0), y = v(0, 1, 0), z = v(0, 0, 1) }
     return compose(body, rel)
 end
+function gestures_pouch_tune(t) for k, x in pairs(t) do if k == "round_out" then POUCH.round_out = x elseif k == "round_out_casual" then POUCH.round_out_casual = x elseif k:sub(1, 7) == "casual_" then POUCH.chest_casual[k:sub(8)] = x else POUCH.chest[k] = x end end end -- (debug: tuning)
 
 -- A script reload starts a new Lua state: magazines and rounds the last one had made (the chest one, one in the hand)
 -- stay on Marcus, floating where they were. Removed once, before anything new is made.
@@ -588,13 +604,13 @@ local function pouch_update(ctx, show)
     local spec = round_spec(ctx.weapon)
     if spec then
         -- a round standing up (its length along its x), out of the armour towards the front
-        local out = mul(f.y, -1)
-        place(pouch.comp, { pos = add(f.pos, mul(out, 4.0)), x = v(0, 0, 1), z = out })
+        local out = f.out or mul(f.y, -1)
+        place(pouch.comp, { pos = add(f.pos, mul(out, ((arms_outfit_casual and arms_outfit_casual()) and POUCH.round_out_casual or POUCH.round_out))), x = f.z, z = out })
         pcall(function() ucall(pouch.comp, "SetWorldScale3D", Vector3d.new(spec.scale, spec.scale, spec.scale)) end)
     elseif round_scale then -- (bolt action / tube, see BA below: this is above it in the file)
         -- a round (shell) standing up (its length is its y), 4 cm out of the armour towards the front, bigger
-        local out = mul(f.y, -1)
-        place(pouch.comp, { pos = add(f.pos, mul(out, 4.0)), x = f.x, y = v(0, 0, 1), z = out })
+        local out = f.out or mul(f.y, -1)
+        place(pouch.comp, { pos = add(f.pos, mul(out, ((arms_outfit_casual and arms_outfit_casual()) and POUCH.round_out_casual or POUCH.round_out))), x = f.x, y = f.z, z = out })
         pcall(function() ucall(pouch.comp, "SetWorldScale3D", Vector3d.new(round_scale, round_scale, round_scale)) end)
     else
         place(pouch.comp, f)
@@ -842,6 +858,11 @@ BA.POUCH_PUT_BACK = 20.0 -- cm: let go this close to the pouch (or anywhere in t
 function BA.at_pouch(ctx, radius)
     local ok, d = pcall(function() return len(sub(ctx.left_pos, pouch_frame(ctx).pos)) end)
     return ok and d <= (radius or ((pouch ~= nil and pouch.shown) and BA.POUCH_GRAB or 8.0))
+end
+function gestures_pouch_dist(pos) -- (grenade.lua: the shown pouch item's distance from a hand; nil when none is shown)
+    if pouch == nil or not pouch.shown or POUCH_CTX == nil then return nil end
+    local ok, d = pcall(function() return len(sub(pos, pouch_frame(POUCH_CTX).pos)) end)
+    return ok and d or nil
 end
 BA.POUCH_OUT = 4.0  -- cm: on the chest it stands this far out of the armour
 -- the round between thumb and index tip (hand bone axes: x along the fingers, -y palm, -z the index' side); the
@@ -1851,6 +1872,7 @@ function gestures_left_pressed(ctx)
         end
         local side = dot(sub(fingers, bolt), wfr.y) >= 0 and 1 or -1
         if bb == "b_handle" then side = 1 end -- (its knob is only on the right)
+        if EDAY_LEFTY == true and LH ~= nil then side = LH.knob_side(side, bb, is_ba(ctx.weapon)) end -- (lefthand.lua: the right hand takes the right knob)
         local ba = is_ba(ctx.weapon)
         local point = BA.knob_point(ctx.weapon, bolt, wfr, side, bb)
         if bb == "b_handle" then point = BA.rod_world(wfr) end -- (the rod at rest: the game slides the bone on a shot)
@@ -2041,6 +2063,7 @@ end
 
 function gestures_right_pressed(ctx)
     if in_zone(ctx.right_head, HIP) then
+        if PISTOL_WEAPON and not RIGHT_FREE then return "free" end -- (the pistol is already in the hand: weapon.lua frees the hand)
         switch_to_pistol(ctx.pawn, ctx.weapon:GetOwner())
         return true
     elseif in_zone(ctx.right_head, OVER_LEFT_SHOULDER) then
@@ -2297,6 +2320,7 @@ gestures_update_inner = function(ctx)
     end
     local spare_left = a ~= nil and a.SpareAmmo > 0 and (has_bone(ctx.weapon, mag_spec(ctx.weapon).bone) or BA.is_tube(ctx.weapon))
     local in_hand = reload.fresh and (reload.state == "holding" or reload.state == "sliding_in")
+    POUCH_CTX = ctx -- (gestures_pouch_dist)
     pouch_update(ctx, spare_left and not in_hand and ctx.cam_fwd ~= nil)
     local wf0, out0 = well(ctx.weapon, ctx.weapon_frame)
     glint_update(ctx, false)
@@ -2653,6 +2677,7 @@ function gestures_handle_point(w)
         return { kind = "ba", point = ba_ball(bolt, f, ba_state(w)), dir = mul(f.x, -1), travel = BA.OPEN + 1, up = f.z, lift = BA.LIFT + 1 }
     end
     local side = bb == "b_handle" and 1 or -1
+    if EDAY_LEFTY == true and LH ~= nil then side = LH.knob_side(side, bb, false) end
     if bb == "b_handle" then return { kind = "rack", bone = bb, point = BA.rod_world(f), dir = mul(f.x, -1), travel = BA.HANDLE_TRAVEL + 1 } end
     return { kind = "rack", bone = bb, point = BA.knob_point(w, bolt, f, side, bb),
              dir = mul(f.x, -1), travel = BOLT_TRAVEL + 1 }

@@ -206,7 +206,9 @@ local function scope_tick(eye, view_rot)
         show(parts, false)
         log(string.format("build took %.0f ms", (os.clock() - t0) * 1000))
     end
-    if def == nil then
+    -- (also when the weapon is on the back over the right shoulder - RIGHT_FREE: still equipped, only hidden - the lens
+    -- had stayed in the free hand)
+    if def == nil or RIGHT_FREE then
         show(parts, false)
         return
     end

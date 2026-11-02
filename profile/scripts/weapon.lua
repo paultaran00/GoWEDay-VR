@@ -655,18 +655,22 @@ local function update_weapon(cam_pos, cam_rot, world_to_meters, aim_eye)
         if RIGHT_FREE then
             if grenade_right_pressed ~= nil and grenade_right_pressed(gesture_ctx) then
                 -- (grenade.lua: the grenade on the body taken)
+            elseif gestures_right_pressed ~= nil and gestures_right_pressed(gesture_ctx) then
+                RIGHT_FREE = false -- (the pistol from the hip / the long gun from the left shoulder)
             elseif over_shoulder then
                 RIGHT_FREE = false
                 log("weapon taken back from the back")
-            elseif gestures_right_pressed ~= nil and gestures_right_pressed(gesture_ctx) then
-                RIGHT_FREE = false -- (the pistol from the hip)
             end
-        elseif not (gestures_right_pressed ~= nil and gestures_right_pressed(gesture_ctx)) and over_shoulder then
-            -- only over the shoulder, the same place it is taken back from (not wherever the grip is pressed)
-            RIGHT_FREE = true
-            two_handed = false
-            HELD_HANDLE = nil
-            log("weapon put on the back: right hand free")
+        else
+            local gr = gestures_right_pressed ~= nil and gestures_right_pressed(gesture_ctx)
+            -- "free": the pistol in the hand, grip at the hip: put away like over the right shoulder
+            if gr == "free" or (not gr and over_shoulder) then
+                -- only over the shoulder, the same place it is taken back from (not wherever the grip is pressed)
+                RIGHT_FREE = true
+                two_handed = false
+                HELD_HANDLE = nil
+                log("weapon put on the back: right hand free")
+            end
         end
     elseif not rgrip and right_grip_was_down then
         if grenade_right_released ~= nil then grenade_right_released(gesture_ctx) end
@@ -1740,6 +1744,7 @@ uevr.sdk.callbacks.on_xinput_get_state(function(retval, user_index, state)
     RIGHT_STICK_X = state.Gamepad.sThumbRX
     -- the right B pressed on a turret gets Marcus off it: still held when he is off, it must not open the pause menu
     -- - ignored until it is let go
+    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_X) == 0 then BACK_B_HELD = false end -- (see the menus' B below)
     if (state.Gamepad.wButtons & XINPUT_GAMEPAD_X) == 0 then VEHICLE_B_HELD = false elseif VEHICLE then
         if not VEHICLE_B_HELD then OFFBODY_REQUEST = true end -- (hides the game's body from the press: offbody_hide)
         VEHICLE_B_HELD = true
@@ -1764,7 +1769,9 @@ uevr.sdk.callbacks.on_xinput_get_state(function(retval, user_index, state)
         -- (the right B that opened the pause menu as START is not also "back" until it is let go)
         if not xx then MENU_B_HELD = false end
         if xx and heli_play then w = w | 0x0010 MENU_B_HELD = true -- (helicopter: START, as in play)
-        elseif xx and not MENU_B_HELD then w = w | XINPUT_GAMEPAD_B end
+        elseif xx and not MENU_B_HELD then w = w | XINPUT_GAMEPAD_B BACK_B_HELD = true end
+        -- (BACK_B_HELD: the right B that closed a menu - the supply cache - is still held when play resumes: it must
+        -- not also be START there; that opened a pause the menu never showed and the game stayed paused)
         state.Gamepad.wButtons = w
     end
     if in_gameplay then
@@ -1806,7 +1813,7 @@ uevr.sdk.callbacks.on_xinput_get_state(function(retval, user_index, state)
             buttons = buttons | XINPUT_GAMEPAD_X
             MENU_UI_PROBE_UNTIL = os.clock() + 2.5 -- (an interaction may open a menu: menu.lua looks for one meanwhile)
         end
-        if right_b_down and not VEHICLE_B_HELD then buttons = buttons | 0x0010 MENU_B_HELD = true end
+        if right_b_down and not VEHICLE_B_HELD and not BACK_B_HELD then buttons = buttons | 0x0010 MENU_B_HELD = true end
         -- (the game's A only while moving and with nothing ahead to take cover behind - sprint.lua WALL_AHEAD: next to
         -- a wall or from standing still A slides into cover)
         if SPRINTING and lmag >= SPRINT_STOP_STICK and not WALL_AHEAD then buttons = buttons | XINPUT_GAMEPAD_A end
@@ -1917,6 +1924,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function()
         vr.set_mod_value("VR_CameraRightOffset", "0.0")
         vr.set_mod_value("VR_CameraUpOffset", "0.0")
         vr.set_mod_value("VR_DPadShifting", "false")
+        if EDAY_LEFTY ~= nil then vr.set_mod_value("VR_SwapControllerInputs", EDAY_LEFTY and "true" or "false") end
         if ui_size ~= nil then vr.set_mod_value("UI_Size", ui_size) end
         if ui_follow ~= nil then vr.set_mod_value("UI_FollowView", ui_follow and "true" or "false") end
     end)

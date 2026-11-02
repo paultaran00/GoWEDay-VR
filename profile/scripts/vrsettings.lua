@@ -172,7 +172,7 @@ end
 
 -- the panel: option -> values (label, setting value); one entry per value ----------------------------------------------
 local OPTIONS = {
-    { key = "hand", values = { { "PRIMARY HAND: RIGHT", "right" }, { "PRIMARY HAND: LEFT (BETA)", "left" } } },
+    { key = "hand", values = { { "PRIMARY HAND: RIGHT", "right" }, { "PRIMARY HAND: LEFT", "left" } } },
     { key = "turn", values = { { "TURNING: SMOOTH", "smooth" }, { "TURNING: SNAP", "snap" } } },
     { key = "snap", values = { { "SNAP ANGLE: 30", 30 }, { "SNAP ANGLE: 45", 45 }, { "SNAP ANGLE: 90", 90 } } },
     { key = "pump", values = { { "SHOTGUN PUMP: MANUAL", "manual" }, { "SHOTGUN PUMP: AUTO", "auto" } } },

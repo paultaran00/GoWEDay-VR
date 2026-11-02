@@ -167,6 +167,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
             CROUCH_STAND_H, CROUCH_HMD_H = crouch.stand_h, h -- (debug)
             want = math.max(0, math.min(CROUCH.max, crouch.stand_h - h - CROUCH.dead))
         end
+        if rawget(_G, "CROUCH_TEST") then want = CROUCH_TEST end -- debug (tests only): forced drop in cm
         local before = CROUCH_DROP
         if not crouch.down_logged and CROUCH_DROP > 20 then
             crouch.down_logged = true
