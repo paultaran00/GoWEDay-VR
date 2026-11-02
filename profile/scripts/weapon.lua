@@ -1900,3 +1900,24 @@ uevr.sdk.callbacks.on_pre_engine_tick(function()
         end
     end)
 end)
+
+-- Once a second the UEVR values we depend on are set again for the current state (aim_still / aim_cine / front end, exactly
+-- as set above): other UEVR global scripts or plugins can change them (stick and sound stopped following the head after real turns).
+local reassert_t = 0
+uevr.sdk.callbacks.on_pre_engine_tick(function()
+    pcall(function()
+        local t = os.clock()
+        if t - reassert_t < 1 then return end
+        reassert_t = t
+        local still = aim_still == true or frontend_pitch == true
+        vr.set_mod_value("VR_AimMethod", still and "0" or (AIM_METHOD_PLAY or "2"))
+        vr.set_mod_value("VR_AimModifyPlayerControlRotation", aim_still and "false" or "true")
+        vr.set_mod_value("VR_MovementOrientation", aim_cine and "0" or "1")
+        vr.set_mod_value("VR_CameraForwardOffset", "0.0")
+        vr.set_mod_value("VR_CameraRightOffset", "0.0")
+        vr.set_mod_value("VR_CameraUpOffset", "0.0")
+        vr.set_mod_value("VR_DPadShifting", "false")
+        if ui_size ~= nil then vr.set_mod_value("UI_Size", ui_size) end
+        if ui_follow ~= nil then vr.set_mod_value("UI_FollowView", ui_follow and "true" or "false") end
+    end)
+end)

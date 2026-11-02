@@ -27,6 +27,10 @@ A full first-person VR mod for **Gears of War: E-Day** (PC), built on a patched
 3. On the title screen, **hold X** (left controller) to enter offline mode.
 4. In game, the mod's options are in **VR SETTINGS** in the pause menu. `Insert` on the keyboard opens the UEVR menu (advanced).
 
+To update, unzip the new version and press **Start** again: the launcher refreshes the mod's files every time and keeps your settings.
+
+Some antivirus programs flag the launcher because it injects the mod into the game. This is a false positive.
+
 ## How to play
 
 Buttons below are named by where they are on the controller: **lower / upper face button** and **stick press**. In VR SETTINGS > BUTTON MAPPING they show as LEFT X / LEFT Y / RIGHT A / RIGHT B (left lower / left upper / right lower / right upper).

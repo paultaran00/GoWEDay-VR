@@ -259,11 +259,14 @@ static class Launcher
         string profileDst = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "UnrealVRMod", Path.GetFileNameWithoutExtension(gameExe));
         string profileSrc = Path.Combine(Here, "profile");
-        if (!File.Exists(Path.Combine(profileDst, @"scripts\fp.lua")) && Directory.Exists(profileSrc))
+        if (Directory.Exists(profileSrc))
         {
-            if (MessageBox.Show("The mod profile is not installed. Copy it to:\n" + profileDst + " ?", "GoW E-Day VR",
+            // first install asks; later starts silently update the shipped files (settings in data\ and config.txt are kept)
+            if (Directory.Exists(profileDst) ||
+                MessageBox.Show("The mod profile is not installed. Copy it to:\n" + profileDst + " ?", "GoW E-Day VR",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-                CopyDir(profileSrc, profileDst);
+                try { SyncProfile(profileSrc, profileDst); }
+                catch (IOException) { throw new Exception("Close the game before starting (the mod files in " + profileDst + " are in use)."); }
         }
 
         // Flag file read by our patched UEVR: present = also load plugins from UnrealVRMod\UEVR\plugins
@@ -335,6 +338,36 @@ static class Launcher
             File.Copy(f, dst + f.Substring(src.Length), true);
     }
 
+    static bool SameFile(string a, string b) { return File.ReadAllBytes(a).SequenceEqual(File.ReadAllBytes(b)); }
+
+    // Mirrors the shipped profile into dst: overwrites shipped files, never config.txt (unless missing) or data\,
+    // removes scripts we no longer ship. Changed/removed scripts are backed up to scripts_backup\<date-time>.
+    public static void SyncProfile(string src, string dst, DateTime? now = null)
+    {
+        string bak = Path.Combine(dst, "scripts_backup", (now ?? DateTime.Now).ToString("yyyyMMdd-HHmmss"));
+        Action<string> backup = f =>
+        {
+            Directory.CreateDirectory(bak);
+            File.Copy(f, Path.Combine(bak, Path.GetFileName(f)), true);
+        };
+        Directory.CreateDirectory(dst);
+        foreach (var f in Directory.GetFiles(src, "*", SearchOption.AllDirectories))
+        {
+            string rel = f.Substring(src.Length).TrimStart('\\', '/'), to = Path.Combine(dst, rel);
+            if (rel.StartsWith(@"data\", StringComparison.OrdinalIgnoreCase)) continue;
+            bool exists = File.Exists(to);
+            if (rel.Equals("config.txt", StringComparison.OrdinalIgnoreCase) && exists) continue;
+            if (exists && SameFile(f, to)) continue;
+            if (exists && rel.StartsWith(@"scripts\", StringComparison.OrdinalIgnoreCase) && rel.EndsWith(".lua", StringComparison.OrdinalIgnoreCase)) backup(to);
+            Directory.CreateDirectory(Path.GetDirectoryName(to));
+            File.Copy(f, to, true);
+        }
+        string sd = Path.Combine(dst, "scripts"), ss = Path.Combine(src, "scripts");
+        if (Directory.Exists(sd) && Directory.Exists(ss))
+            foreach (var f in Directory.GetFiles(sd, "*.lua"))
+                if (!File.Exists(Path.Combine(ss, Path.GetFileName(f)))) { backup(f); File.Delete(f); }
+    }
+
     static int SelfTest()
     {
         Func<bool, string, int> check = (ok, what) => { Console.WriteLine((ok ? "ok   " : "FAIL ") + what); return ok ? 0 : 1; };
@@ -383,6 +416,29 @@ static class Launcher
                 string v; fails += check(!new Dictionary<string, string> { { "GameFolder", "a" } }.TryGetValue("Runtime", out v), "old path.txt -> SteamVR");
             }
             finally { File.Delete(tf); }
+        }
+        {
+            string t = Path.Combine(Path.GetTempPath(), "gowsync " + Guid.NewGuid().ToString("N").Substring(0, 6)), s2 = Path.Combine(t, "src"), d = Path.Combine(t, "dst");
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(s2, "scripts")); Directory.CreateDirectory(Path.Combine(d, "scripts")); Directory.CreateDirectory(Path.Combine(d, "data"));
+                File.WriteAllText(Path.Combine(s2, @"scripts\fp.lua"), "new"); File.WriteAllText(Path.Combine(s2, "config.txt"), "ours");
+                File.WriteAllText(Path.Combine(s2, "cameras.txt"), "cam");
+                File.WriteAllText(Path.Combine(d, @"scripts\fp.lua"), "old"); File.WriteAllText(Path.Combine(d, @"scripts\extra.lua"), "stale");
+                File.WriteAllText(Path.Combine(d, @"data\eday_vrsettings.lua"), "mine"); File.WriteAllText(Path.Combine(d, "config.txt"), "custom");
+                SyncProfile(s2, d, new DateTime(2026, 11, 2, 10, 0, 0));
+                string b = Path.Combine(d, @"scripts_backup\20261102-100000");
+                fails += check(File.ReadAllText(Path.Combine(d, @"scripts\fp.lua")) == "new", "sync: fp.lua = ours");
+                fails += check(!File.Exists(Path.Combine(d, @"scripts\extra.lua")), "sync: stale extra.lua removed");
+                fails += check(File.ReadAllText(Path.Combine(d, @"data\eday_vrsettings.lua")) == "mine", "sync: data untouched");
+                fails += check(File.ReadAllText(Path.Combine(d, "config.txt")) == "custom", "sync: config.txt untouched");
+                fails += check(File.ReadAllText(Path.Combine(d, "cameras.txt")) == "cam", "sync: other shipped file copied");
+                fails += check(File.ReadAllText(Path.Combine(b, "fp.lua")) == "old" && File.ReadAllText(Path.Combine(b, "extra.lua")) == "stale", "sync: backup has old fp.lua and extra.lua");
+                File.Delete(Path.Combine(d, "config.txt")); SyncProfile(s2, d, new DateTime(2026, 11, 2, 10, 0, 1));
+                fails += check(File.ReadAllText(Path.Combine(d, "config.txt")) == "ours", "sync: missing config.txt copied");
+                fails += check(!Directory.Exists(Path.Combine(d, @"scripts_backup\20261102-100001")), "sync: unchanged run makes no backup");
+            }
+            finally { Directory.Delete(t, true); }
         }
         fails += check(WindowArgs(true) == "-windowed", "windowed args");
         fails += check(WindowArgs(false) == "-fullscreen", "fullscreen args");

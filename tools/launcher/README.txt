@@ -33,6 +33,9 @@ In game: the mod's options are in VR SETTINGS in the pause menu; Insert on the k
 
 What it changes on your PC:
 - Steam copy only: creates steam_appid.txt next to the game exe (otherwise the game asks to relaunch via Steam);
-- on first start copies the mod profile (profile folder) to %APPDATA%\UnrealVRMod\<game exe name> (asks first);
+- on first start copies the mod profile (profile folder) to %APPDATA%\UnrealVRMod\<game exe name> (asks first).
+  Each Start updates the mod's scripts in %APPDATA%\UnrealVRMod\<game exe name> (your settings in data\ and config.txt are kept; changed scripts are backed up to scripts_backup);
 - sets this folder's UEVR injector to OpenXR.
 The game's own graphics settings are not changed: windowed / full screen is only a launch argument.
+
+Some antivirus programs flag the launcher because it injects the mod into the game. This is a false positive.
