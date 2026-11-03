@@ -20,7 +20,7 @@ local function log(m) pcall(function() uevr.params.functions.log_info("[vrsettin
 local FILE = "eday_vrsettings.lua"
 local DEFAULT_MAP = { interact = "lX", pause = "rB", eject = "rA", laser = "rS", sprint = "lS", gamey = "lY", cover = "none", tsprint = "lT", tacom = "none", gamemap = "none" }
 local function default_map() local m = {} for k, v in pairs(DEFAULT_MAP) do m[k] = v end return m end
-VR_SETTINGS = { hand = "right", turn = "smooth", snap = 30, pump = "manual", hud = "small", ammo = "on", map = default_map() }
+VR_SETTINGS = { hand = "right", sticks = "not", turn = "smooth", snap = 30, pump = "manual", hud = "small", ammo = "on", map = default_map() }
 local SNAP_ANGLES = { 30, 45, 90 }
 -- physical buttons (names of the Quest controllers) and the XInput bits UEVR sends for them (VR.cpp: right A = A,
 -- left X = B, right B = X, left Y = Y, stick presses = LEFT / RIGHT_THUMB); gameplay actions and the bit each is
@@ -69,7 +69,7 @@ local function vrs_save()
     if f then
         local m = {}
         for _, a in ipairs(ACTIONS) do m[#m + 1] = string.format("%s = %q", a[1], VR_SETTINGS.map[a[1]]) end
-        f:write(string.format("return { hand = %q, turn = %q, snap = %d, pump = %q, hud = %q, ammo = %q, map = { %s } }\n", VR_SETTINGS.hand, VR_SETTINGS.turn, VR_SETTINGS.snap, VR_SETTINGS.pump, VR_SETTINGS.hud, VR_SETTINGS.ammo, table.concat(m, ", ")))
+        f:write(string.format("return { hand = %q, sticks = %q, turn = %q, snap = %d, pump = %q, hud = %q, ammo = %q, map = { %s } }\n", VR_SETTINGS.hand, VR_SETTINGS.sticks, VR_SETTINGS.turn, VR_SETTINGS.snap, VR_SETTINGS.pump, VR_SETTINGS.hud, VR_SETTINGS.ammo, table.concat(m, ", ")))
         f:close()
     end
 end
@@ -80,6 +80,8 @@ pcall(function()
     local ok, t = pcall(load(src))
     if not ok or type(t) ~= "table" then return end
     if t.hand == "right" or t.hand == "left" then VR_SETTINGS.hand = t.hand end
+    VR_SETTINGS.sticks = VR_SETTINGS.hand == "left" and "swapped" or "not" -- (older files: the hand's own default = today's controls)
+    if t.sticks == "swapped" or t.sticks == "not" then VR_SETTINGS.sticks = t.sticks end
     if t.turn == "smooth" or t.turn == "snap" then VR_SETTINGS.turn = t.turn end
     for _, a in ipairs(SNAP_ANGLES) do if t.snap == a then VR_SETTINGS.snap = a end end
     if t.pump == "manual" or t.pump == "auto" then VR_SETTINGS.pump = t.pump end
@@ -178,8 +180,9 @@ local OPTIONS = {
     { key = "pump", values = { { "SHOTGUN PUMP: MANUAL", "manual" }, { "SHOTGUN PUMP: AUTO", "auto" } } },
     { key = "hud", values = { { "HUD SIZE: LARGE", "large" }, { "HUD SIZE: MEDIUM", "medium" }, { "HUD SIZE: SMALL", "small" } } },
     { key = "ammo", values = { { "AMMO COUNTER: OFF", "off" }, { "AMMO COUNTER: ON", "on" } } },
+    { key = "sticks", page = "map", values = { { "STICKS: NOT SWAPPED", "not" }, { "STICKS: SWAPPED", "swapped" } } }, -- (BUTTON MAPPING page; lefthand.lua; either hand)
 }
-local PANEL_X, PANEL_Y = 980, 300 -- (canvas units: the 1920x1080 UI; the empty right half under the chapter header)
+local PANEL_X, PANEL_Y = 1230, 300 -- (canvas units: the 1920x1080 UI; the empty right half under the chapter header)
 
 -- native-looking widgets -------------------------------------------------------------------------------------------
 local statics = api:find_uobject("Class /Script/Engine.GameplayStatics"):get_class_default_object()
@@ -273,7 +276,7 @@ local function show_value(opt)
 end
 -- the same for the mapping rows: of each action the entry of the button it is on
 local function show_map()
-    local hand = VR_SETTINGS.hand
+    local hand = VR_SETTINGS.hand .. "/" .. VR_SETTINGS.sticks -- (one label set per hand and sticks setting)
     local la = listen and listen.act
     for _, row in ipairs(ui.map_rows) do
         for _, e in ipairs(row) do e.btn:SetVisibility((VR_SETTINGS.map[e.action] == e.phys and e.hand == hand and la ~= e.action) and 0 or 1) end
@@ -331,39 +334,44 @@ local function build(pc, scene)
     -- main page
     u.main_panel = new_panel()
     add("main", u.main_panel, "VR SETTINGS", "title")
-    for i, o in ipairs(OPTIONS) do
+    local function add_option(i, o, page, panel)
         local opt = { key = o.key, entries = {} }
         for j, v in ipairs(o.values) do
-            local e = add("main", u.main_panel, v[1], "value")
+            local e = add(page, panel, v[1], "value")
             e.value, e.opt = v[2], opt
             opt.entries[j] = e
         end
         show_value(opt)
         u.opts[i] = opt
     end
+    for i, o in ipairs(OPTIONS) do if o.page ~= "map" then add_option(i, o, "main", u.main_panel) end end
     u.mapping = add("main", u.main_panel, "BUTTON MAPPING", "mapping")
     u.back = add("main", u.main_panel, "BACK", "back")
     -- mapping page: one entry per (action, button), the one of the current button shown
     u.map_panel = new_panel()
     add("map", u.map_panel, "BUTTON MAPPING", "title")
+    u.listen_rows = {}
     for i, a in ipairs(ACTIONS) do
         u.map_rows[i] = {}
         -- (both label sets are built, once each; the one of the current hand is shown)
-        for h, hand in ipairs({ "right", "left" }) do
+        for h, hand in ipairs({ "right/not", "right/swapped", "left/not", "left/swapped" }) do
             for j, ph in ipairs(PHYS) do
-                local shown = (hand == "left") and PHYS_NAME[MIRROR[ph[1]]] or ph[2]
+                local shown = (hand:find("^left") ~= nil) and PHYS_NAME[MIRROR[ph[1]]] or ph[2]
+                -- the stick presses name the PHYSICAL stick: bit 0x0040 is the press of the walking stick (lefthand.lua)
+                if ph[1] == "lS" then shown = hand:find("/not") and PHYS_NAME.lS or PHYS_NAME.rS
+                elseif ph[1] == "rS" then shown = hand:find("/not") and PHYS_NAME.rS or PHYS_NAME.lS end
                 local e = add("map", u.map_panel, a[2] .. ": " .. shown, "map")
-                e.action, e.phys, e.hand = a[1], ph[1], hand
+                e.action, e.phys, e.hand, e.name = a[1], ph[1], hand, a[2] .. ": " .. shown
                 u.map_rows[i][(h - 1) * #PHYS + j] = e
             end
         end
-    end
-    -- (the row of an action that waits for an input: shown instead of its value)
-    u.listen_rows = {}
-    for _, a in ipairs(ACTIONS) do
-        local e = add("map", u.map_panel, a[2] .. ": WAITING FOR INPUT...", "map")
-        e.action, e.phys = a[1], "listen"
-        u.listen_rows[a[1]] = e
+        -- (the row of an action that waits for an input: shown instead of its value, in its own place)
+        local le = add("map", u.map_panel, a[2] .. ": WAITING FOR INPUT...", "map")
+        le.action, le.phys = a[1], "listen"
+        u.listen_rows[a[1]] = le
+        if a[1] == "tsprint" then -- (the STICKS row: right after SPRINT (HOLD))
+            for k, o in ipairs(OPTIONS) do if o.page == "map" then add_option(k, o, "map", u.map_panel) end end
+        end
     end
     u.scene_obj = scene
     ui = u
@@ -419,7 +427,12 @@ local function activate(e)
             end
         end
         show_value(opt)
-        if opt.key == "hand" and eday_set_hand ~= nil then eday_set_hand(VR_SETTINGS.hand == "left") show_map() end
+        if opt.key == "hand" and eday_set_hand ~= nil then
+            eday_set_hand(VR_SETTINGS.hand == "left")
+            VR_SETTINGS.sticks = VR_SETTINGS.hand == "left" and "swapped" or "not" -- (the hand's default: nobody's play changes)
+            for _, o in ipairs(ui.opts) do if o.key == "sticks" then show_value(o) end end
+        end
+        if opt.key == "hand" or opt.key == "sticks" then show_map() end
         vrs_save()
         log(string.format("hand %s, turn %s, snap %d", VR_SETTINGS.hand, VR_SETTINGS.turn, VR_SETTINGS.snap))
     elseif kind == "map" then
@@ -427,6 +440,8 @@ local function activate(e)
         if listen ~= nil and listen.act == e.action then stop_listen("cancelled") else start_listen(e.action) end
     elseif kind == "reset" then
         VR_SETTINGS.map = default_map()
+        VR_SETTINGS.sticks = VR_SETTINGS.hand == "left" and "swapped" or "not" -- (the hand's default)
+        for _, o in ipairs(ui.opts) do if o.key == "sticks" then show_value(o) end end
         check_map_default()
         show_map()
         vrs_save()

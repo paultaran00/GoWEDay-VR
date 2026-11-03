@@ -30,3 +30,19 @@ function LH.mirror_holster(placed, mesh)
     local y = refl(placed.y)
     return { pos = v(d.x + c.x, d.y + c.y, d.z + c.z), x = refl(placed.x), y = v(-y.x, -y.y, -y.z), z = refl(placed.z) }
 end
+
+-- STICKS: VR_SETTINGS.sticks = "not" (STICKS: NOT SWAPPED: walk with the physical LEFT stick, turn with the right)
+-- or "swapped" (walk with the physical right stick, turn with the left), for either primary hand. UEVR's
+-- VR_SwapControllerInputs (LEFT) already delivers the sticks swapped, so the axes and the stick-press bits are swapped here
+-- exactly when the delivered layout is not the chosen one: LEFT + NOT SWAPPED and RIGHT + SWAPPED. LEFT + SWAPPED and
+-- RIGHT + NOT SWAPPED are today's behaviour and are not touched. This callback is registered before menu / sprint /
+-- vrsettings / weapon / zz_debug (scripts load alphabetically), so all of them see one consistent pad: the walking stick is
+-- always "left" (axes and bit 0x0040), the turning stick "right" (0x0080).
+uevr.sdk.callbacks.on_xinput_get_state(function(retval, user_index, state)
+    if EDAY_LEFTY == nil or VR_SETTINGS == nil or (VR_SETTINGS.sticks == "not") ~= (EDAY_LEFTY == true) then return end
+    local g = state.Gamepad
+    g.sThumbLX, g.sThumbRX = g.sThumbRX, g.sThumbLX
+    g.sThumbLY, g.sThumbRY = g.sThumbRY, g.sThumbLY
+    local b = g.wButtons
+    g.wButtons = (b & ~0x00C0) | ((b & 0x0040) << 1) | ((b & 0x0080) >> 1)
+end)
