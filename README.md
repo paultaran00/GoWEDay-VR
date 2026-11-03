@@ -119,6 +119,7 @@ The mod renders through **OpenXR**: it uses the OpenXR runtime you set active
 > **For more FPS:**
 > - turn on **DLSS** or lower the **graphics settings** in the game's own options;
 > - try **[OFXR-Bridge](https://github.com/tig3rmast3r/OFXR-Bridge)** (a third-party tool by tig3rmast3r, not part of this mod).
+> - judder or shake when you move your head: set **Ray Tracing** to **Low**. In VR every frame is rendered twice (once per eye) at a high frame rate; ray tracing spikes make frames miss the headset's refresh, so it judders even when the FPS looks stable.
 
 ## What it does
 
