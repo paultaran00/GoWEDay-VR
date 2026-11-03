@@ -4,8 +4,10 @@
 --  * debug camera: cam_at / cam_orbit move the rendered view (both eyes) for a few seconds, then it switches itself
 --    off. Gameplay (weapon, aiming) still uses the real head: this script runs after the others.
 -- Never call get_objects_matching here: it starts UEVR's UObjectHook, which crashes this game.
--- Development only: set to false (or move this file out of scripts) to switch it off completely.
-local DEBUG_TOOLS = true
+-- Development only: off unless the marker file data/dev_tools exists (create it to switch the tools on; the launcher
+-- never touches data/, so players have no marker and no polling). Checked once, at load.
+local DEBUG_TOOLS = false
+pcall(function() local f = io.open("dev_tools", "r") if f then f:close() DEBUG_TOOLS = true end end) -- (UEVR io is rooted in data/)
 if not DEBUG_TOOLS then return end
 
 local api = uevr.api

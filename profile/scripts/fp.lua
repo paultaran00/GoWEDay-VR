@@ -94,8 +94,29 @@ set_cvar("r.MotionBlur.Amount", 0)
 
 local hidden_for = nil
 
+-- Hair / beard meshes that are separate skeletal meshes (the later outfits have no pawn.HairCards: Hero_MarcusHair_GP01
+-- floated as a wedge of strands in front of the eyes): hidden by their asset name, remembered, shown again with the head.
+local hair_hidden = {} -- component name -> component (the userdata wrappers differ per call: keyed by name)
+local function hide_hair_meshes(pawn, note)
+    for _, m in ipairs(ucall(pawn, "K2_GetComponentsByClass", skeletal_mesh_c) or {}) do
+        pcall(function()
+            local n = m.SkeletalMesh and m.SkeletalMesh:get_fname():to_string() or ""
+            if (n:find("Hair", 1, true) or n:find("Beard", 1, true)) and m:IsVisible() then
+                m:SetVisibility(false, true)
+                local key = m:get_fname():to_string()
+                if hair_hidden[key] == nil then
+                    hair_hidden[key] = m
+                    if note then note(m, "hair mesh " .. n) else log("hid hair mesh " .. m:get_fname():to_string() .. " (" .. n .. ")") end
+                end
+            end
+        end)
+    end
+end
+
 -- cutscene: the head, hair and collar are shown again (hidden again when play resumes)
 local function show_head(pawn)
+    for _, m in pairs(hair_hidden) do pcall(function() m:SetVisibility(true, true) end) end
+    hair_hidden = {}
     for _, mesh in ipairs(ucall(pawn, "K2_GetComponentsByClass", skeletal_mesh_c) or {}) do
         for _, bone in ipairs(hidden_bones) do
             pcall(function() ucall(mesh, "UnHideBoneByName", ucall(kismet_string, "Conv_StringToName", bone)) end)
@@ -132,6 +153,7 @@ local function hide_head(pawn)
 
     -- HairCards is a separate skeletal mesh: hide it entirely.
     pcall(function() pawn.HairCards:SetVisibility(false, true) end)
+    hide_hair_meshes(pawn)
 end
 
 -- the squad flashlight (body mesh + light-beam cone) is mounted on Marcus' armour, 5-7 cm from the eyes: it floats in
@@ -179,6 +201,7 @@ local function rehide_head(pawn)
         end
         local hc = pawn.HairCards
         if hc ~= nil and hc:IsVisible() then hc:SetVisibility(false, true) note(hc, "HairCards") end
+        hide_hair_meshes(pawn, note)
         local bn = ucall(kismet_string, "Conv_StringToName", hidden_bones[1])
         for _, m in ipairs(ucall(pawn, "K2_GetComponentsByClass", skeletal_mesh_c) or {}) do
             if not m:get_fname():to_string():find("Component_%d+$") and not m:IsBoneHiddenByName(bn) then
