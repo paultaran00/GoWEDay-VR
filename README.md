@@ -31,6 +31,17 @@ To update, unzip the new version and press **Start** again: the launcher refresh
 
 Some antivirus programs flag the launcher because it injects the mod into the game. This is a false positive.
 
+## Runs on OpenXR
+
+The mod renders through **OpenXR**: it uses the OpenXR runtime you set active
+(for SteamVR: SteamVR > Settings > OpenXR > Set SteamVR as OpenXR Runtime).
+
+> [!TIP]
+> **For more FPS:**
+> - turn on **DLSS** or lower the **graphics settings** in the game's own options;
+> - try **[OFXR-Bridge](https://github.com/tig3rmast3r/OFXR-Bridge)** (a third-party tool by tig3rmast3r, not part of this mod).
+> - judder or shake when you move your head: set **Ray Tracing** to **Low**. In VR every frame is rendered twice (once per eye) at a high frame rate; ray tracing spikes make frames miss the headset's refresh, so it judders even when the FPS looks stable.
+
 ## How to play
 
 Buttons: **X** (left controller lower button), **Y** (left controller upper button), **A** (right controller lower button), **B** (right controller upper button). These are the defaults; you can change them in VR SETTINGS > BUTTON MAPPING.
@@ -109,17 +120,6 @@ On the title screen, hold X (left controller lower button).
 ### If something looks off
 - **View behind your head, or too high or low:** stand straight and recenter your headset. In UEVR's menu (Insert key) there's also **Set Standing Height**.
 - **UEVR menu:** the **Insert** key opens it (advanced).
-
-## Runs on OpenXR
-
-The mod renders through **OpenXR**: it uses the OpenXR runtime you set active
-(for SteamVR: SteamVR > Settings > OpenXR > Set SteamVR as OpenXR Runtime).
-
-> [!TIP]
-> **For more FPS:**
-> - turn on **DLSS** or lower the **graphics settings** in the game's own options;
-> - try **[OFXR-Bridge](https://github.com/tig3rmast3r/OFXR-Bridge)** (a third-party tool by tig3rmast3r, not part of this mod).
-> - judder or shake when you move your head: set **Ray Tracing** to **Low**. In VR every frame is rendered twice (once per eye) at a high frame rate; ray tracing spikes make frames miss the headset's refresh, so it judders even when the FPS looks stable.
 
 ## What it does
 
