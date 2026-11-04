@@ -654,6 +654,7 @@ function BA.hs() return ARMS_SUPPORT_SIDE == "R" and -1 or 1 end
 BA.FOREGRIP = { x = 43.7, y = -1.9, z = -2.1 } -- (the same as weapon.lua's FOREGRIP: where the left hand takes the front)
 -- weapons whose knob sits elsewhere on the same bone: the classic Lancer's knob is ON b_bolt (sticks out 5.5 cm on
 -- each side), not 5.5 cm in front of it like the chainsaw Lancer's (it grabbed air; seen with markers)
+BA.FINGERS_ON_KNOB = 6.5 -- cm: the drawn fingers this close to the knob take the handle even when the magazine well is nearer to the hand
 BA.KNOB_CLASS = { BP_Wpn_Lancer_C = { fwd = 0.0, side = 5.5 }, BP_Wpn_HammerBurst_C = { fwd = 0.0, side = 4.5 } } -- (the Hammerburst: knob on b_bolt, seen with markers from above)
 function BA.knob_point(weapon, bolt, f, side, bb)
     local ok, cname = pcall(function() return weapon:GetOwner():get_class():get_fname():to_string() end)
@@ -1770,6 +1771,7 @@ function BA.bolt_share(ctx, fingers)
         radius = BA.bolt_radius(bb)
     end
     local d = math.min(len(sub(fingers, point)) * (is_ba(ctx.weapon) and BOLT_GRAB_RADIUS or radius) / BOLT_FINGER_RADIUS, len(sub(ctx.left_pos, point)))
+    if not is_ba(ctx.weapon) then d = math.min(d, len(sub(fingers, point)) / (BA.FINGERS_ON_KNOB * 1.3) * radius) end -- (fingers on the knob: the lever yields too)
     return d / radius
 end
 -- returns true when the press was used here (so it is not a foregrip grab)
@@ -1853,7 +1855,7 @@ function gestures_left_pressed(ctx)
                 if ok and f ~= nil then hand = f end
             end
             local ctrl_rel = ctx.left_frame and relative(wfr, ctx.left_frame)
-            rack = { start = ctx.left_pos, done = false, hand_rel = relative(wfr, hand), pulled = 0, knob = P, corr = v(0, 0, 0),
+            rack = { start = ctx.left_pos, start_x = dot(sub(ctx.left_pos, wfr.pos), wfr.x), done = false, hand_rel = relative(wfr, hand), pulled = 0, knob = P, corr = v(0, 0, 0),
                      side = 1, frames = 100000, pump = true, travel = BA.PUMP_TRAVEL, ctrl_rel = ctrl_rel, pump_frames = 0 }
             log(string.format("pump lever taken (%.1f cm)", d))
             return true
@@ -1885,7 +1887,8 @@ function gestures_left_pressed(ctx)
         local F0 = BA.FOREGRIP
         local d_fg = len(sub(ctx.left_pos, add(wfr.pos, add(add(mul(wfr.x, F0.x), mul(wfr.y, F0.y)), mul(wfr.z, F0.z)))))
         local d_bolt = math.min(len(sub(fingers, point)) * (ba and BOLT_GRAB_RADIUS or Rb) / BOLT_FINGER_RADIUS, len(sub(ctx.left_pos, point)))
-        if hand_comp ~= nil and ((ba and d_bolt < BA.GRAB_RADIUS) or (not ba and d_bolt < Rb and d_bolt < len(sub(ctx.left_pos, wf.pos)) and d_bolt < d_fg)) then
+        local on_knob = not ba and len(sub(fingers, point)) < BA.FINGERS_ON_KNOB and len(sub(ctx.left_pos, point)) < d_fg -- (fingers on the knob: the handle, not the magazine)
+        if hand_comp ~= nil and ((ba and d_bolt < BA.GRAB_RADIUS) or (not ba and d_bolt < Rb and d_bolt < len(sub(ctx.left_pos, wf.pos)) and d_bolt < d_fg) or on_knob) then
             -- one set hold, the same every time (hand bone axes: x along the fingers, y back of the hand, z towards
             -- the little finger; knuckles ~10 cm along x, their middle ~1.5 cm towards the index):
             --  left side: palm down above and behind the knob, fingers forward, index and middle hooking over its front
@@ -1936,7 +1939,7 @@ function gestures_left_pressed(ctx)
             end
             local kd = sub(point, wfr.pos)
             if ba then hand.pos = add(hand.pos, mul(wfr.x, ba_state(ctx.weapon).pulled)) end -- (hand_rel as if forward: the pull shifts it)
-            rack = { start = ctx.left_pos, done = false, hand_rel = relative(wfr, hand), pulled = 0,
+            rack = { start = ctx.left_pos, start_x = dot(sub(ctx.left_pos, wfr.pos), wfr.x), done = false, hand_rel = relative(wfr, hand), pulled = 0,
                      knob = v(dot(kd, wfr.x), dot(kd, wfr.y), dot(kd, wfr.z)), corr = v(0, 0, 0), side = side, back = back,
                      frames = 100000 } -- a set hold: no settling
             if bb == "b_handle" then rack.half, rack.travel = BA.ROD_HALF, BA.HANDLE_TRAVEL end
@@ -2268,7 +2271,10 @@ gestures_update_inner = function(ctx)
     elseif rack ~= nil then
         rack.weapon_frame = ctx.weapon_frame
         local pdir = rack.pump and -1 or 1 -- (the pump is pulled forward, a charging handle back)
-        rack.pulled = math.max(0, math.min(rack.travel or BOLT_TRAVEL, dot(sub(ctx.left_pos, rack.start), mul(ctx.weapon_frame.x, -pdir))))
+        -- (the hand's travel along the weapon's own x, from where it took the handle: measured in the weapon's frame - the
+        -- world-space measure counted the body's walking and turning as pull, or as push)
+        local wfn = ctx.weapon_frame
+        rack.pulled = math.max(0, math.min(rack.travel or BOLT_TRAVEL, -pdir * (dot(sub(ctx.left_pos, wfn.pos), wfn.x) - rack.start_x)))
         if rack.pump then
             bolt_show = { weapon = ctx.weapon, bone = nil, pulled = 0, pump_deg = -math.deg(rack.pulled / BA.PUMP_ARM),
                           pump_bolt = BA.PUMP_BOLT * rack.pulled / BA.PUMP_TRAVEL }

@@ -528,11 +528,21 @@ local function update_weapon(cam_pos, cam_rot, world_to_meters, aim_eye)
     -- climbing a ladder (the game puts the weapon away and animates the hands on the rungs): its own body and arms
     -- are shown, as in a cutscene, but the view stays first person; our arms, laser and pouch are set aside. (Our
     -- arms had stayed frozen in the last pose, the laser hanging in the air where it was.)
-    local climbing = false
+    local climbing, grabbed = false, false
     pcall(function()
         local t = ucall(pawn, "GetComponentByClass", api:find_uobject("Class /Script/TCGameplayTags.TCGameplayTagComponent")).CachedOwnedTagContainer.GameplayTags
-        for i = 1, #t do if t[i].TagName:to_string():find("Ladder") then climbing = true break end end
+        for i = 1, #t do
+            local tn = t[i].TagName:to_string()
+            if tn:find("Ladder") then climbing = true
+            -- a Locust grabs Marcus (the game's struggle: PawnState.Struggle.Enter / Follower / Participant, IsBeingExecuted): it
+            -- takes the weapon away, throws the control rotation round and moves its camera about - treated like a ladder (the game's
+            -- own animated body, the view at its eyes, first person), plus the control yaw held (GRAB_YAW below)
+            elseif tn:find("^PawnState%.Struggle") or tn == "PawnState.IsBeingExecuted" then grabbed = true end
+        end
     end)
+    if grabbed then climbing = true grab_seen = clock end
+    local grab_now = grabbed or clock - (grab_seen or -10) < 0.3
+    if grab_now ~= (GRAB or false) then GRAB = grab_now log(grab_now and "grabbed: first person, game's body" or "grab over") end
     -- getting off at the top: the game still animates the dismount (and takes the weapon out) after the ladder tag
     -- is gone - the game's body stays until a weapon is back in hand and LADDER_EXIT_TIME has passed (the
     -- climb looked right, the step off at the top did not)
@@ -1506,6 +1516,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function()
     OFFBODY.frame = OFFBODY.frame + 1
     offbody_scan() -- (every frame: the weapon the game equips after its step-away showed for a frame or two otherwise) -- (the weapon the game equips after its step-away)
 end)
+GRAB_YAW_RING = {} -- (control yaw of the last second, not grabbed; a global: this file is at the locals limit)
 uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     local pawn = api:get_local_pawn(0)
     -- (a menu open over the game without pausing it - the supply cache: menu.lua MENU_UI_OPEN - counts as paused)
@@ -1589,6 +1600,21 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     pcall(function()
         local pc = api:get_player_controller(0)
         local r = pc:GetControlRotation()
+        -- grabbed by a Locust: the game turns the control rotation towards it (65 deg in 0.3 s) - held at the yaw from just
+        -- before (the newest one at least 0.25 s old), so the world does not swing; the view turns only with the head
+        if GRAB and not cine and not paused then
+            if GRAB_YAW == nil then
+                GRAB_YAW = r.Yaw
+                for _, h in ipairs(GRAB_YAW_RING) do if os.clock() - h.t >= 0.25 then GRAB_YAW = h.yaw end end
+            end
+            local dy = (r.Yaw - GRAB_YAW + 180) % 360 - 180
+            if math.abs(dy) > 0.05 then ucall(pc, "SetControlRotation", Vector3d.new(r.Pitch, GRAB_YAW, r.Roll)) end
+        else
+            GRAB_YAW = nil
+            local nowc = os.clock()
+            GRAB_YAW_RING[#GRAB_YAW_RING + 1] = { t = nowc, yaw = r.Yaw }
+            while #GRAB_YAW_RING > 0 and nowc - GRAB_YAW_RING[1].t > 1.0 do table.remove(GRAB_YAW_RING, 1) end
+        end
         if CHAINSAW_HOLD and not cine and not paused then
             saw_yaw = saw_yaw or r.Yaw
             if bucket >= 1 then saw_yaw = saw_yaw + (stick > 0 and 1 or -1) * TURN_RATES[bucket] * (delta or 0) end

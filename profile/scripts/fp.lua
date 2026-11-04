@@ -39,6 +39,9 @@ local smoothed_rel_z, last_clock = nil, nil
 -- (low-passed) height is followed only where the game moves the head on purpose: cover, downed, mantle/vault/climb, or a
 -- capsule whose half-height differs from the standing one. The two are blended with EYE_FOLLOW_TAU.
 local EYE_FOLLOW_TAU, EYE_LEARN_TIME, EYE_FIXED_DEFAULT, EYE_FIXED_MIN, EYE_FIXED_MAX = 0.3, 5, 77, 70, 90 -- s; learned = 75th percentile of the raw height over EYE_LEARN_TIME s on foot (moving or not), clamped; EYE_FIXED_DEFAULT until then
+GRAB_PITCH_TAU, GRAB_PITCH_RATE, GRAB_PITCH_MAX = 0.2, 200, 85 -- s; deg/s (the view tilts up with his face while a Locust has him on his back)
+local kmath_g = api:find_uobject("Class /Script/Engine.KismetMathLibrary"):get_class_default_object()
+GRAB_EYE_TAU, GRAB_EYE_STEP, GRAB_EYE_FWD, GRAB_EYE_MIN = 0.05, 9, 8, 3 -- s; cm per frame; cm in front of the eye sockets (the target), and at least this far in front (never inside the neck)
 local EYE_FOLLOW_TAGS = { "Cover", "DBNO", "Downed", "Mantle", "Vault", "Climb" } -- (PawnState.* tags containing these; not Allow/Can)
 local eye_fixed = nil -- { rel = learned height above the capsule, hh = capsule half-height then, sum, n, t, mesh }
 local eye_follow_k, eye_follow_tags_t, eye_follow_tag = 0, 0, false
@@ -183,6 +186,22 @@ local function hide_flashlight(pawn)
     end)
 end
 
+-- grabbed by a Locust: his neck would fill the view lying on his back - hidden on every mesh of his (ours too) while GRAB, shown
+-- again after (checked every frame, done on the change)
+local grab_neck = false
+local function grab_neck_update(pawn)
+    if (GRAB and true or false) == grab_neck or hidden_for ~= pawn then return end
+    grab_neck = GRAB and true or false
+    pcall(function()
+        for _, m in ipairs(ucall(pawn, "K2_GetComponentsByClass", skeletal_mesh_c) or {}) do
+            for _, b in ipairs({ "b_neck", "twist_neck_01", "twist_neck_02" }) do
+                local bn = ucall(kismet_string, "Conv_StringToName", b)
+                if grab_neck then pcall(function() ucall(m, "HideBoneByName", bn, 0) end) else pcall(function() ucall(m, "UnHideBoneByName", bn) end) end
+            end
+        end
+    end)
+end
+
 -- the game can show hair/beard again or add a mesh later (outfit swap, quality change): re-asserted every 1.5 s
 local rehide_next, rehid_logged = 0, {}
 local function rehide_head(pawn)
@@ -247,6 +266,25 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     end
     -- chainsaw running: the game's camera swings after Marcus' body; the view keeps the held aim (weapon.lua)
     if saw_yaw ~= nil and not CINEMATIC then rotation.y = saw_yaw end
+    -- grabbed by a Locust (weapon.lua GRAB): it throws Marcus on his back - the view tilts up with his face (the pitch of
+    -- the animated eyes against what it was before), eased in and out and limited per frame; the headset turns on top of it
+    if view_index == 0 then
+        local now = os.clock()
+        local dt = grab_pitch_t and math.min(now - grab_pitch_t, 0.1) or 0
+        grab_pitch_t = now
+        local target = 0
+        pcall(function()
+            local nl_ = ucall(mesh, "GetSocketRotation", name_eye_l)
+            local f = kmath_g:GetForwardVector(nl_)
+            local pitch = math.deg(math.asin(math.max(-1, math.min(1, f.z))))
+            if GRAB then target = math.max(-GRAB_PITCH_MAX, math.min(GRAB_PITCH_MAX, pitch - (grab_pitch_ref or pitch)))
+            else grab_pitch_ref = grab_pitch_ref and grab_pitch_ref + (pitch - grab_pitch_ref) * (1 - math.exp(-dt / 0.5)) or pitch end
+        end)
+        local step = (target - (grab_pitch or 0)) * (1 - math.exp(-dt / GRAB_PITCH_TAU))
+        local lim = GRAB_PITCH_RATE * dt
+        grab_pitch = (grab_pitch or 0) + math.max(-lim, math.min(lim, step))
+        if not GRAB and math.abs(grab_pitch) < 0.05 then grab_pitch = 0 end
+    end
 
     -- turret (weapon.lua sets VEHICLE): the controller turns the game's aim (the only way the gun turns) and the
     -- game's camera swings with it. The view is held as the game's camera was when control passed to the gun - the
@@ -423,6 +461,7 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     hide_head(pawn)
     hide_flashlight(pawn)
     rehide_head(pawn)
+    grab_neck_update(pawn)
 
     -- Horizontally the camera sits on the capsule's centre, not on the head: the game twists the torso when
     -- aiming/firing and the head swings with it. Height comes from the eyes (crouch, cover), smoothed.
@@ -491,6 +530,43 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     local k = ladder_eye_k or 0
     if k > 0.001 then
         local ex, ey, ez = (l.x + r.x) * 0.5, (l.y + r.y) * 0.5, (l.z + r.z) * 0.5
+        if GRAB then
+            -- grabbed by a Locust: the game's animation moves the head in big steps (33 cm in one frame when it changes the
+            -- pose): the eye follows it smoothed (translation only, never its rotation)
+            if view_index == 0 then
+                local now = os.clock()
+                local dt = grab_eye_t and math.min(now - grab_eye_t, 0.1) or 0
+                grab_eye_t = now
+                local a = 1 - math.exp(-dt / GRAB_EYE_TAU)
+                -- the face: in front of the animated eye sockets along their forward (the head's), not at them
+                local fwd_ok, gf = pcall(function() return kmath_g:GetForwardVector(ucall(mesh, "GetSocketRotation", name_eye_l)) end)
+                if fwd_ok and gf ~= nil then
+                    grab_f = { x = gf.x, y = gf.y, z = gf.z }
+                    grab_mid = { x = ex, y = ey, z = ez }
+                    ex, ey, ez = ex + gf.x * GRAB_EYE_FWD, ey + gf.y * GRAB_EYE_FWD, ez + gf.z * GRAB_EYE_FWD
+                end
+                if grab_eye then
+                    -- (each step also limited to GRAB_EYE_STEP cm: the animation's 33 cm jumps are spread over a few frames)
+                    local dx, dy, dz = (ex - grab_eye.x) * a, (ey - grab_eye.y) * a, (ez - grab_eye.z) * a
+                    local dl = math.sqrt(dx * dx + dy * dy + dz * dz)
+                    if dl > GRAB_EYE_STEP then local c = GRAB_EYE_STEP / dl dx, dy, dz = dx * c, dy * c, dz * c end
+                    grab_eye = { x = grab_eye.x + dx, y = grab_eye.y + dy, z = grab_eye.z + dz }
+                else
+                    grab_eye = { x = ex, y = ey, z = ez }
+                end
+                -- never behind the eye sockets (the neck is there): pushed forward to GRAB_EYE_MIN in front of them
+                if grab_f and grab_mid then
+                    local along = (grab_eye.x - grab_mid.x) * grab_f.x + (grab_eye.y - grab_mid.y) * grab_f.y + (grab_eye.z - grab_mid.z) * grab_f.z
+                    if along < GRAB_EYE_MIN then
+                        local push = GRAB_EYE_MIN - along
+                        grab_eye = { x = grab_eye.x + grab_f.x * push, y = grab_eye.y + grab_f.y * push, z = grab_eye.z + grab_f.z * push }
+                    end
+                end
+            end
+            if grab_eye then ex, ey, ez = grab_eye.x, grab_eye.y, grab_eye.z end
+        else
+            grab_eye, grab_eye_t = nil, nil
+        end
         position.x = position.x + (ex - position.x) * k
         position.y = position.y + (ey - position.y) * k
         position.z = position.z + (ez - position.z) * k
@@ -587,6 +663,9 @@ function turret_hand_world(raw)
 end
 
 uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_index, world_to_meters, position, rotation, is_double)
+    -- grabbed by a Locust: the view tilts up with his face (grab_pitch, worked out in the early callback; the early callback's own
+    -- pitch is replaced by the headset's, so it is added here, to the final rotation)
+    if (grab_pitch or 0) ~= 0 and not CINEMATIC and not VEHICLE then rotation.x = math.max(-89, math.min(89, rotation.x + grab_pitch)) end
     if VEHICLE and turret_view.pawn ~= nil and not TURRET_VIEW_DEV_OFF then pcall(turret_final, view_index, world_to_meters, position, rotation) return end
     -- ladder: the game's body is fixed on the ladder, so a physical step since the last recenter showed as the view off
     -- the neck. Take the headset's HORIZONTAL offset from the standing origin back out (the way UEVR added it: turned by
