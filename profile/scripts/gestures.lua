@@ -760,7 +760,7 @@ function BA.hud_run()
 end
 -- (gestures_update runs in the stereo-view callback, where the game does not announce ammo changes: the engine tick does)
 uevr.sdk.callbacks.on_pre_engine_tick(function() if HUD_AT ~= nil then BA.hud_run() end end)
-function BA.tick() pcall(function() eday_haptic(0.0, 0.05, 140, 0.8, vr.get_left_joystick_source()) end) end
+function BA.tick() pcall(function() eday_haptic(0.0, 0.05, 140, 0.8, uevr.params.vr.get_left_joystick_source()) end) end
 -- Switching weapons: `reload` is one table for the weapon in hand. Called when the weapon in hand is not reload.weapon:
 -- a magazine from the chest in the left hand goes back (reset_reload); a weapon whose magazine was dropped (A) is parked
 -- (BA.PARKED) and comes back as "empty" - still needing a magazine, its magazine bone still hidden - when it is equipped again.
@@ -2126,6 +2126,24 @@ local function eject_mag(ctx)
     log("magazine dropped (A)")
 end
 
+-- Fire haptics: the virtual pad drops the game's rumble, so a shot (rounds in the magazine fell while no reload runs) pulses the
+-- weapon hand, half as strong on the support hand while two-handed. { amp, secs } by class name part, first match wins.
+BA.SHOT_HAPTIC = { { "Snub", 0.6, 0.05 }, { "Magnum", 0.6, 0.05 }, { "Pistol", 0.6, 0.05 },
+    { "Gnasher", 1.0, 0.10 }, { "Longshot", 1.0, 0.10 }, { "Boomshot", 1.0, 0.10 }, { "Breechshot", 1.0, 0.10 }, { "Mortar", 1.0, 0.10 },
+    { "Mulcher", 1.0, 0.10 }, { "TorqueBow", 1.0, 0.10 }, { "Gutpuncher", 1.0, 0.10 }, { "Scorcher", 1.0, 0.10 },
+    { "Lancer", 0.5, 0.04 }, { "HammerBurst", 0.5, 0.04 }, { "Retro", 0.5, 0.04 }, { "Vulcan", 0.5, 0.04 } }
+function BA.shot_haptic(ctx, a)
+    local w, n = ctx.weapon, a ~= nil and a.AmmoInMagazine or nil
+    local pw, prev = BA.shot_w, BA.shot_prev
+    BA.shot_w, BA.shot_prev = w, n
+    if prev == nil or n == nil or pw ~= w or n >= prev or reload.state ~= "idle" or CHAINSAW_HOLD or CINEMATIC then return end
+    local amp, secs = 0.6, 0.05
+    local ok, cname = pcall(function() return w:GetOwner():get_class():get_fname():to_string() end)
+    if ok then for _, e in ipairs(BA.SHOT_HAPTIC) do if cname:find(e[1]) then amp, secs = e[2], e[3] break end end end
+    pcall(function() eday_haptic(0.0, secs, 140, amp, uevr.params.vr.get_right_joystick_source()) end)
+    if TWO_HANDED then pcall(function() eday_haptic(0.0, secs, 140, amp * 0.5, uevr.params.vr.get_left_joystick_source()) end) end
+end
+
 gestures_update_inner = function(ctx)
     LAST_GESTURE_WF = ctx.weapon_frame
     if reload.weapon ~= nil and reload.weapon ~= ctx.weapon then BA.park_reload() end -- (a reload of the OTHER weapon must not block this one)
@@ -2160,6 +2178,7 @@ gestures_update_inner = function(ctx)
         log("reloaded (a weapon only held)")
         a = ammo(ctx.weapon)
     end
+    BA.shot_haptic(ctx, a)
     if reload.state == "idle" then mag_split_sync(ctx.weapon, a) end -- (shots: from the fuller magazine)
     local dry = a ~= nil and a.MagazineCapacity > 2 and rounds_left(a) <= 0
     local chambered = chamber_update(ctx, a)
