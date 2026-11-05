@@ -789,6 +789,51 @@ local function read_finger_axes(comp, side)
     end
     return out
 end
+-- The Chainsaw Lancer's front grip with the saw off: the left fingers' axes in the hand bone's coordinates (read with
+-- read_finger_axes from the game's pose, as {x,y,z} arrays: x and z axes used). While the saw runs the game's rev animation closes the left hand into a fist, so
+-- the front grip is put back to this pose (non-lefty; lefty takes its fingers from the mirrored hold, never the live pose).
+local SAW_FRONT = { axes = {
+["b_index_00_"]={x={0.98863,0.00192,-0.15033},y={-0.00247,0.99999,-0.00351},z={0.15033,0.00384,0.98863}},
+["b_index_01_"]={x={0.99718,0.06270,-0.04115},y={-0.06856,0.98455,-0.16114},z={0.03041,0.16351,0.98607}},
+["b_index_02_"]={x={0.65854,-0.74542,0.10329},y={0.75193,0.64623,-0.13035},z={0.03041,0.16350,0.98607}},
+["b_index_03_"]={x={-0.06072,-0.98441,0.16510},y={0.99769,-0.06490,-0.02002},z={0.03042,0.16350,0.98607}},
+["b_middle_00_"]={x={0.99994,-0.01049,0.00031},y={0.01045,0.99797,0.06289},z={-0.00097,-0.06289,0.99802}},
+["b_middle_01_"]={x={0.93992,-0.33549,0.06329},y={0.33665,0.94159,-0.00839},z={-0.05678,0.02919,0.99796}},
+["b_middle_02_"]={x={0.05697,-0.99785,0.03243},y={0.99676,0.05869,0.05500},z={-0.05678,0.02919,0.99796}},
+["b_middle_03_"]={x={-0.59618,-0.80279,-0.01044},y={0.80084,-0.59555,0.06299},z={-0.05678,0.02919,0.99796}},
+["b_pinky_00_"]={x={0.94701,-0.12795,0.29462},y={0.08732,0.98524,0.14720},z={-0.30911,-0.11368,0.94421}},
+["b_pinky_01_"]={x={0.88053,-0.46734,0.07913},y={0.45972,0.88269,0.09754},z={-0.11543,-0.04950,0.99208}},
+["b_pinky_02_"]={x={0.08397,-0.99567,-0.03991},y={0.98976,0.07870,0.11909},z={-0.11543,-0.04951,0.99208}},
+["b_pinky_03_"]={x={-0.20890,-0.97521,-0.07297},y={0.97110,-0.21567,0.10223},z={-0.11543,-0.04951,0.99208}},
+["b_ring_00_"]={x={0.98487,-0.06152,0.16204},y={0.04703,0.99467,0.09181},z={-0.16682,-0.08280,0.98250}},
+["b_ring_01_"]={x={0.91217,-0.39947,0.09147},y={0.39540,0.91657,0.05971},z={-0.10769,-0.01830,0.99402}},
+["b_ring_02_"]={x={-0.06675,-0.99744,-0.02560},y={0.99194,-0.06911,0.10619},z={-0.10769,-0.01830,0.99402}},
+["b_ring_03_"]={x={-0.52695,-0.84678,-0.07268},y={0.84305,-0.53162,0.08155},z={-0.10769,-0.01831,0.99402}},
+["b_thumb_00_"]={x={0.71796,-0.35875,-0.59652},y={-0.69545,-0.33305,-0.63673},z={0.02976,0.87200,-0.48861}},
+["b_thumb_01_"]={x={0.71796,-0.35875,-0.59652},y={-0.69545,-0.33305,-0.63673},z={0.02976,0.87200,-0.48861}},
+["b_thumb_02_"]={x={0.66621,-0.38173,-0.64066},y={-0.74517,-0.30666,-0.59218},z={0.02959,0.87192,-0.48875}}
+} }
+function SAW_FRONT.apply(comp, side, hand)
+    local function w(a) return add(add(mul(hand.x, a.x), mul(hand.y, a.y)), mul(hand.z, a.z)) end
+    for _, base in ipairs(FINGER_BASES) do -- (parents first)
+        local r = SAW_FRONT.axes[base]
+        if r ~= nil then
+            local x, z = w(v(r.x[1], r.x[2], r.x[3])), w(v(r.z[1], r.z[2], r.z[3]))
+            ucall(comp, "SetBoneRotationByName", fname(base .. side), rot_from_xz(Vector3d.new(x.x, x.y, x.z), Vector3d.new(z.x, z.y, z.z)), WORLD_SPACE)
+        end
+    end
+end
+-- SAW_FRONT.axes as read_finger_axes gives them ({x={x,y,z},..}), for the lefty mirror below
+function SAW_FRONT.named()
+    if SAW_FRONT.named_axes == nil then
+        local t = {}
+        for base, r in pairs(SAW_FRONT.axes) do
+            t[base] = { x = { x = r.x[1], y = r.x[2], z = r.x[3] }, z = { x = r.z[1], y = r.z[2], z = r.z[3] } }
+        end
+        SAW_FRONT.named_axes = t
+    end
+    return SAW_FRONT.named_axes
+end
 -- Those fingers on the other hand, mirrored: in hand coordinates the same rule as above, z -> -z.
 local function set_mirrored_fingers(comp, axes, to_side, hand)
     local function w(a) return add(add(mul(hand.x, a.x), mul(hand.y, a.y)), mul(hand.z, a.z)) end
@@ -1128,11 +1173,12 @@ local function update_arms(pawn, weapon, left_weapon, cam, weapon_object, left_h
             set_bone(c.copy, sb.bone, frame)
         end
         SEC("arms: set arm/twist/stray bones")
+        if CHAINSAW_HOLD and left_fingers_closed and not lefty then local ok_s, e_s = pcall(SAW_FRONT.apply, c.copy, SIDE.sup, arms[SIDE.sup][3]) if not ok_s then log("saw fingers: " .. tostring(e_s)) end end
         if lefty then
             -- the weapon hand: the right hand's grip fingers mirrored (the index on the trigger, curled below); the support
             -- hand: when it holds the foregrip with the game's fingers, the left hand's mirrored
             if not state.right_free then pcall(set_mirrored_fingers, c.copy, anim.R, SIDE.wpn, arms[SIDE.wpn][3]) end
-            if left_fingers_closed then pcall(set_mirrored_fingers, c.copy, anim.L, SIDE.sup, arms[SIDE.sup][3]) end
+            if left_fingers_closed then pcall(set_mirrored_fingers, c.copy, CHAINSAW_HOLD and SAW_FRONT.named() or anim.L, SIDE.sup, arms[SIDE.sup][3]) end
         end
         if (RIGHT_TRIGGER or 0) > 0.02 then pcall(curl_right_index, c.copy, mul(weapon.x, -1), RIGHT_TRIGGER, SIDE.wpn) end
         if not left_fingers_closed then

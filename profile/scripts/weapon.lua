@@ -722,6 +722,8 @@ local function update_weapon(cam_pos, cam_rot, world_to_meters, aim_eye)
             pistol_d = len(sub(lh, palm))
         end
         local pistol_near = pistol_d ~= nil and pistol_d < PISTOL_FIRST_CM
+        -- the hand's distance to the front grip point: gestures.lua leaves the magazine to the grip when this is nearer
+        LEFT_FOREGRIP_CM = (not PISTOL_WEAPON) and len(sub(lh, to_world(gesture_ctx.weapon_frame.pos, gesture_ctx.weapon_frame.x, gesture_ctx.weapon_frame.y, gesture_ctx.weapon_frame.z, FOREGRIP))) or nil
         if grenade_left_pressed ~= nil and grenade_left_pressed(gesture_ctx) then
             -- (grenade.lua: the grenade on the body taken)
         elseif RIGHT_FREE then

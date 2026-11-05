@@ -1954,7 +1954,8 @@ function gestures_left_pressed(ctx)
     end
     local split_in = (reload.state == "idle" or reload.state == "empty") and mag_side_near(ctx.weapon, ctx.weapon_frame, ctx.left_pos, false) or nil
     if split_in ~= nil then MAG_SIDE[wkey(ctx.weapon)] = split_in wf = well(ctx.weapon, ctx.weapon_frame) end
-    if (reload.state == "idle" or split_in ~= nil) and len(sub(ctx.left_pos, wf.pos)) < MAG_GRAB_RADIUS and has_bone(ctx.weapon, mag_spec(ctx.weapon).bone) and not is_ba(ctx.weapon) then
+    if (reload.state == "idle" or split_in ~= nil) and len(sub(ctx.left_pos, wf.pos)) < MAG_GRAB_RADIUS
+       and not (LEFT_FOREGRIP_CM ~= nil and split_in == nil and LEFT_FOREGRIP_CM < len(sub(ctx.left_pos, wf.pos))) and has_bone(ctx.weapon, mag_spec(ctx.weapon).bone) and not is_ba(ctx.weapon) then
         local a = ammo(ctx.weapon)
         if a == nil then return false end -- (a magazine can always be taken out, even with no spare ammo)
         reload.weapon, reload.fresh = ctx.weapon, false
@@ -2088,7 +2089,32 @@ function gestures_update(ctx)
 end
 -- A on the right controller drops the weapon's magazine (weapon.lua sets this; the game's dodge is masked)
 gestures_eject_request = false
+-- VR SETTINGS > RELOAD: AUTO: the drop-magazine button reloads from the spare ammo instead (the game's own reload, nothing dropped)
+function BA.quick_reload(ctx)
+    local a = ammo(ctx.weapon)
+    if a == nil or reload.state ~= "idle" or rack ~= nil or lever ~= nil or a.SpareAmmo <= 0 or a.AmmoInMagazine >= a.MagazineCapacity then return end
+    BA.qr_weapon = ctx.weapon -- (done from the engine tick: only there does the game announce the change to the ammo counter)
+end
+function BA.quick_reload_run(w)
+    local a = ammo(w)
+    if a == nil then return end
+    local before, spare = a.AmmoInMagazine, a.SpareAmmo
+    for _, o in ipairs(w:GetOwner().ReplicatedAssemblyObjects or {}) do
+        if o:is_a(mag_c) then pcall(function() ucall(o, "ServerDoReload") end) end
+    end
+    chamber[weapon_key(w)] = true -- (a round is in the chamber: no rack / pump / bolt needed)
+    if BA.CYC[wkey(w)] then BA.CYC[wkey(w)].need = false end
+    a = ammo(w)
+    log(string.format("reloaded (A, auto): %s -> %s, spare %s -> %s", tostring(before), tostring(a and a.AmmoInMagazine), tostring(spare), tostring(a and a.SpareAmmo)))
+end
+uevr.sdk.callbacks.on_pre_engine_tick(function()
+    local w = BA.qr_weapon
+    if w == nil then return end
+    BA.qr_weapon = nil
+    pcall(BA.quick_reload_run, w)
+end)
 local function eject_mag(ctx)
+    if VR_SETTINGS ~= nil and VR_SETTINGS.reload == "auto" then BA.quick_reload(ctx) return end
     local a = ammo(ctx.weapon)
     -- also while a fresh magazine from the chest is in the hand and the weapon still has its own
     local holding_fresh = reload.fresh and reload.state == "holding" and reload.prev_state == "idle"

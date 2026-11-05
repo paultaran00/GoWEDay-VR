@@ -112,6 +112,7 @@ On the title screen, hold X (left controller lower button).
 - **PRIMARY HAND:** right or left.
 - **TURNING:** smooth or snap, plus the snap angle.
 - **SHOTGUN PUMP:** manual, or auto (the Gnasher rechambers by itself).
+- **RELOAD:** manual, or auto (A (right controller lower button) reloads from your spare ammo, no magazines by hand).
 - **HUD SIZE:** small (default), medium or large. Small keeps the whole HUD, objectives included, in view; large makes the text bigger.
 - **AMMO COUNTER:** on (default) shows the game's ammo panel (magazine and total), off hides it.
 - **BUTTON MAPPING:** click an action, it shows WAITING FOR INPUT, then press the button you want. If that button was already used, the two actions swap. Press SPACE on the keyboard to set an action to NONE. RESET TO DEFAULTS brings the original layout back.
