@@ -1063,6 +1063,9 @@ end
 LASER_ON = LASER_ON or {} -- weapon class -> on (global: kept across script reloads)
 local LASER_SWITCH = { ChainsawLancer = { fwd = 2.0, up = 1.5, side = -4.5 }, Lancer = { fwd = 2.0, up = 1.5, side = -4.5 },
                        Gnasher = { fwd = 2.0, up = 1.5, side = -4.5 }, Snub = { fwd = 2.0, up = 1.5, side = -2.5 }, -- cm, weapon axes (left side)
+                       -- the other hand weapons: no slider measured, the right stick press only
+                       HammerBurst = { fwd = 0, up = 1000, side = 0 }, LMG = { fwd = 0, up = 1000, side = 0 }, LocustShotgun = { fwd = 0, up = 1000, side = 0 },
+                       Longshot = { fwd = 0, up = 1000, side = 0 }, Magnum = { fwd = 0, up = 1000, side = 0 },
                        -- turret guns (on a stand or carried): the right stick press only (no slider: out of reach)
                        Breechshot = { fwd = 0, up = 1000, side = 0 }, Vulcan = { fwd = 0, up = 1000, side = 0 }, Troika = { fwd = 0, up = 1000, side = 0 }, HeavyBoomshot = { fwd = 0, up = 1000, side = 0 } }
 local LASER_TOUCH = 4.5        -- cm from the fingers to the slider to flip it

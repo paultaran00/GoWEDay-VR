@@ -201,6 +201,47 @@ local f_settext = api:find_uobject("Class /Script/UMG.RichTextBlock"):find_funct
 -- reference for as long as the game runs; a few bytes per label per menu opening)
 local KEEP = {}
 
+-- UNLOCK ALL SIGHTS (an action row, nothing saved): registers the sight mods (ItemInfo_Mod_<name>) in the campaign's
+-- FLMetagameGameStateActorComponent, ~10 per tick. Names from the game's asset list (HoloSight / MarksmanScope / SniperScope / TargetFinder).
+local SIGHT_MODS = {
+    "Breechshot_HoloSight", "Breechshot_SniperScope", "Breechshot_TargetFinderScope", "ChainsawLancer_HoloSight",
+    "ChainsawLancer_SniperScope", "ChainsawLancer_TargetFinderScope", "Gnasher_HoloSight", "Hammerburst_HoloSight",
+    "Hammerburst_MarksmanScope", "LMG_HoloSight", "Lancer_HoloSight", "Lancer_MarksmanScope",
+    "Lancer_TargetFinderScope", "LocustShotgun_HoloSight", "Longshot_HoloSight", "Longshot_MarksmanScope",
+    "Longshot_SniperScope", "Longshot_TargetFinderScope", "Magnum_HoloSight", "Magnum_MarksmanScope",
+    "Magnum_SniperScope", "Magnum_TargetFinderScope", "Snub_HoloSight", "Breechshot_MarksmanScope_Campaign",
+    "ChainsawLancer_MarksmanScope_Campaign",
+}
+local UNL = { st = "idle", t0 = 0 } -- st: idle | confirm | working | result | all | campaign
+local UNL_BATCH, UNL_CONFIRM_SECS = 10, 5
+local function unl_comp()
+    local pawn = api:get_local_pawn(0)
+    local gs = pawn ~= nil and statics:GetGameState(pawn) or nil
+    if gs == nil or gs:get_class():get_fname():to_string() ~= "BP_GameState_CampaignMode_C" then return nil end
+    return gs:GetComponentByClass(api:find_uobject("Class /Script/FairlightGameFramework.FLMetagameGameStateActorComponent"))
+end
+local function unl_registered(c) -- (set of the registered ItemInfo names)
+    local set, s = {}, c:GetWeaponModCollection().WeaponModRegisterStates
+    for i = 1, #s do if s[i].bIsRegistered then set[s[i].WeaponModInfo.ItemInfo:get_fname():to_string()] = true end end
+    return set
+end
+local function unl_register(c, name)
+    local full = "ItemInfo_Mod_" .. name
+    local a = eday_asset("FLMetagameWeaponModItemInfo /Game/Fairlight/Metagame/ItemInfos/WeaponModInfos/" .. full .. "." .. full)
+    if a == nil then return false end
+    local info = StructObject.new(api:find_uobject("ScriptStruct /Script/FairlightGameFramework.FLWeaponModInfo"))
+    info.ModCategory = 2
+    info.ItemInfo = a
+    return c:RegisterWeaponMod(info)
+end
+local function unl_missing(c)
+    local set, miss = unl_registered(c), {}
+    for _, n in ipairs(SIGHT_MODS) do if not set["ItemInfo_Mod_" .. n] then miss[#miss + 1] = n end end
+    return miss
+end
+UNL_REGISTER_ONE = unl_register -- (debug)
+
+
 -- UEVR Lua skips FText: Conv_NameToText through ProcessEvent (virtual 77), its 16 bytes copied into RichText SetText's
 -- params. Once per label, at build time, on a fresh buffer; the widget takes its own reference with SetText.
 local function set_text_once(item, label)
@@ -347,6 +388,12 @@ local function build(pc, scene)
         u.opts[i] = opt
     end
     for i, o in ipairs(OPTIONS) do if o.page ~= "map" then add_option(i, o, "main", u.main_panel) end end
+    u.unl = {}
+    for k, t in pairs({ idle = "UNLOCK ALL SIGHTS", confirm = "PRESS AGAIN TO CONFIRM", working = "UNLOCKING SIGHTS...", all = "ALL SIGHTS UNLOCKED", campaign = "CAMPAIGN ONLY", result = "SIGHTS UNLOCKED" }) do
+        u.unl[k] = add("main", u.main_panel, t, "unlock")
+    end
+    UNL.st = "idle"
+    for k, e in pairs(u.unl) do e.btn:SetVisibility(k == "idle" and 0 or 1) end
     u.mapping = add("main", u.main_panel, "BUTTON MAPPING", "mapping")
     u.back = add("main", u.main_panel, "BACK", "back")
     -- mapping page: one entry per (action, button), the one of the current button shown
@@ -409,8 +456,55 @@ end
 local function set_none(act) commit(act, "none") end -- (SPACE)
 VRS_NONE = function(act) set_none(act) end -- (debug: tools/dbg.sh)
 
+function UNL.show() -- (the entry of the state shown, the others hidden)
+    if ui == nil or ui.dead or ui.unl == nil then return end
+    for k, e in pairs(ui.unl) do e.btn:SetVisibility(k == UNL.st and 0 or 1) end
+end
+local function unl_set(st)
+    UNL.st, UNL.t0 = st, os.clock()
+    UNL.show()
+end
+local function unl_press()
+    if UNL.st == "working" or UNL.st == "all" then return end
+    local c = unl_comp()
+    if c == nil then unl_set("campaign") return end
+    if UNL.st == "confirm" and os.clock() - UNL.t0 <= UNL_CONFIRM_SECS then
+        UNL.queue, UNL.i = unl_missing(c), 1
+        unl_set("working")
+        log("unlock sights: " .. #UNL.queue .. " to register")
+        return
+    end
+    unl_set(#unl_missing(c) == 0 and "all" or "confirm")
+end
+local function unl_tick()
+    local st, now = UNL.st, os.clock()
+    if st == "confirm" and now - UNL.t0 > UNL_CONFIRM_SECS then unl_set("idle")
+    elseif st == "campaign" and now - UNL.t0 > 3 then unl_set("idle")
+    elseif st == "working" then
+        local c = unl_comp()
+        if c == nil then unl_set("campaign") return end
+        local q = UNL.queue
+        for _ = 1, UNL_BATCH do
+            if UNL.i > #q then break end
+            local ok, err = pcall(unl_register, c, q[UNL.i])
+            if not ok then log("unlock " .. q[UNL.i] .. ": " .. tostring(err)) end
+            UNL.i = UNL.i + 1
+        end
+        if UNL.i > #q then
+            local n = #SIGHT_MODS - #unl_missing(c)
+            log("unlock sights: " .. n .. "/" .. #SIGHT_MODS)
+            -- (the result text: one more label of the same kind as at build time)
+            if ui ~= nil and not ui.dead and ui.unl ~= nil then
+                pcall(set_text_once, ui.unl.result.item, (n == #SIGHT_MODS and "SIGHTS UNLOCKED " or "SOME SIGHTS FAILED ") .. n .. "/" .. #SIGHT_MODS)
+            end
+            unl_set("result")
+        end
+    end
+end
+
 local function activate(e)
     local kind = e.kind
+    if kind == "unlock" then unl_press() return end
     if kind ~= "map" and listen ~= nil then stop_listen("cancelled") end
     if e == ui.main then
         set_panel(not ui.open)
@@ -498,6 +592,7 @@ local function tick()
         end
     end
     if ui == nil or ui.dead then a_edge, listen = false, nil return end
+    unl_tick()
     -- a row listens: the first mappable input pressed after everything was let go is its button (the left trigger is read
     -- from menu.lua's click state, which zeroes it)
     local lt_c, rt_c = false, false
@@ -574,6 +669,7 @@ end)
 VRS_MAP_CHECK = check_map_default -- (debug: after a map change from dbg)
 VRS_SAVE = vrs_save -- (debug)
 VRS_ACTIVATE = activate -- (debug)
+VRS_UNL = { st = UNL, press = unl_press, tick = unl_tick, missing = unl_missing, comp = unl_comp } -- (debug)
 VRS_LISTEN = function() return listen end -- (debug)
 VRS_STATE = function() return ui end -- (debug: tools/dbg.sh)
 log("loaded")

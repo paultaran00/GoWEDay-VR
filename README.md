@@ -68,6 +68,7 @@ Everything here is for right-handed play. With **PRIMARY HAND: LEFT** in VR SETT
 - **Put the weapon away** (free right hand): right grip over your **right** shoulder. Do it again to take it back.
 - **Laser:** right stick press, or touch the laser switch on the side of the weapon with your left index finger and squeeze the left grip.
 - **Melee:** swing the weapon into an enemy, or punch with your left fist (left grip held, empty hand).
+- **Sights:** a sight fitted at a supply cache works on every weapon. For scopes, put your eye to them like the Longshot's scope; holo sights show a red reticle on the glass.
 
 ### Reloading
 Spare magazines and shells come from your **chest**: reach a little below your chin with the left hand and squeeze the left grip.
@@ -115,6 +116,7 @@ On the title screen, hold X (left controller lower button).
 - **RELOAD:** manual, or auto (A (right controller lower button) reloads from your spare ammo, no magazines by hand).
 - **HUD SIZE:** small (default), medium or large. Small keeps the whole HUD, objectives included, in view; large makes the text bigger.
 - **AMMO COUNTER:** on (default) shows the game's ammo panel (magazine and total), off hides it.
+- **UNLOCK ALL SIGHTS:** makes every sight available at the supply cache (campaign only; press twice to confirm; lasts until you restart the game).
 - **BUTTON MAPPING:** click an action, it shows WAITING FOR INPUT, then press the button you want. If that button was already used, the two actions swap. Press SPACE on the keyboard to set an action to NONE. RESET TO DEFAULTS brings the original layout back.
   - **STICKS:** NOT SWAPPED = walk with the left stick, turn with the right; SWAPPED = the other way round. Each stick press moves with its stick. Changing PRIMARY HAND sets the usual one for that hand (left hand: SWAPPED), then you can change it.
 
@@ -130,7 +132,8 @@ The mod turns the campaign into a full first-person VR game:
 - Weapons are held and aimed with the motion controllers, with two-handed grips.
 - Physical interactions: reloading by hand, melee, the chainsaw, mounted guns.
 - Menus are used with laser pointers from the controllers.
-- A **VR SETTINGS** entry in the pause menu: primary hand, smooth or snap turning, button mapping.
+- Weapon sights and scopes work in VR, with a real zoomed view.
+- A **VR SETTINGS** entry in the pause menu: primary hand, smooth or snap turning, button mapping, sights unlock.
 
 It is built on a patched UEVR and runs on OpenXR.
 
