@@ -156,6 +156,13 @@ local GLASS_ROT = { 0, 0, 0 } -- (turns the glass plane about its normal if the 
 local GLASS_FRACTION = 0.95 -- (measured: the reticle circle fills this much of the glass material's square)
 local EYE_NEAR = 25       -- cm from the eyepiece: closer than this the scope's camera runs (it costs a scene render)
 local RT_SIZE = 1024 -- (512 looked pixelated in the headset)
+-- SCOPE_CHEAP: the scope's capture skips what a 4x lens does not need - dynamic shadows (the big one), fog, volumetric fog, AO, SSR, motion blur,
+-- bloom, contact shadows, decals, DoF, lens flares, atmosphere, clouds (SceneCaptureComponent:SetShowFlagSettings; needs our patched UEVRBackend: struct
+-- arrays from Lua; with any other backend the call does nothing). Measured: 12 extra captures in the same scene: 88-103 -> 45 ms a frame
+-- (~6.5 -> ~2.6 ms per capture). false = the capture as it was. (bRenderInMainRenderer was tried: lit parts stay black - not usable.)
+local SCOPE_CHEAP = true
+local CHEAP_FLAGS = { "DynamicShadows", "Fog", "VolumetricFog", "AmbientOcclusion", "ScreenSpaceReflections", "MotionBlur", "Bloom",
+    "ContactShadows", "Decals", "DepthOfField", "LensFlares", "Atmosphere", "Cloud" }
 -- Cost (the Longshot lowered the frame rate): the camera renders the scene a second time. Every frame only while
 -- the eye is at the eyepiece (EYE_NEAR); further away every FAR_EVERY-th frame; not at all while the lens is out of
 -- the view (more than VIEW_CONE_DEG off where the head looks).
@@ -276,6 +283,11 @@ local function build(def)
     cc.bCaptureEveryFrame = false
     cc.bCaptureOnMovement = false
     cc.bAlwaysPersistRenderingState = true -- its exposure carries from capture to capture (else: white in bright light)
+    if SCOPE_CHEAP then
+        local list = {}
+        for _, n in ipairs(CHEAP_FLAGS) do list[#list + 1] = { ShowFlagName = n, Enabled = false } end
+        pcall(function() cc:SetShowFlagSettings(list) end)
+    end
     local lens = mesh_actor(DISC, material(LENS_MAT, rt, 1), Vector3d.new(def.radius / 50, def.radius / 50, 0.001))
     -- the reticle: in the weapon's axes, a line along y (horizontal) and one along z (vertical), just before the lens
     local line_mat = material(LINE_MAT, api:find_uobject(WHITE), 0)

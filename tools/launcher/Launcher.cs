@@ -21,7 +21,7 @@ static class Launcher
     [STAThread]
     static int Main(string[] args)
     {
-        SetProcessDPIAware(); // real monitor pixels for the Fullscreen size
+        SetProcessDPIAware(); // sharp text; LauncherForm scales its 96-DPI layout itself (AutoScaleMode.Dpi)
         if (args.Length == 1 && args[0] == "--selftest") return SelfTest();
         Application.EnableVisualStyles();
         Application.Run(new LauncherForm());
@@ -459,6 +459,10 @@ class LauncherForm : Form
         Text = "Gears of War: E-Day VR";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); // the icon csc embedded (tools\launcher\icon.ico)
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
+        // Layout below is in pixels at 100% (96 DPI); Dpi mode scales it to the monitor's scaling (125%, 150%...).
+        SuspendLayout();
+        AutoScaleDimensions = new SizeF(96f, 96f);
+        AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(520, 232);
         StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 9f);
@@ -466,7 +470,7 @@ class LauncherForm : Form
         var lbl1 = new Label { Text = "Game folder or game exe (Steam or Xbox app):", Location = new Point(12, 12), AutoSize = true };
         folder.SetBounds(12, 34, 400, 24);
         var browse = new Button { Text = "Browse...", Location = new Point(420, 32), Size = new Size(88, 27) };
-        var start = new Button { Text = "Start", Location = new Point(388, 184), Size = new Size(120, 36), Font = new Font("Segoe UI", 11f, FontStyle.Bold) };
+        var start = new Button { Text = "Start", Location = new Point(388, 188), Size = new Size(120, 36), Font = new Font("Segoe UI", 11f, FontStyle.Bold) };
         var note = new Label { Text = "Campaign only", Location = new Point(12, 199), AutoSize = true, ForeColor = Color.DarkRed };
         var kofi = new LinkLabel { Text = "Support the mod on Ko-fi", Location = new Point(130, 199), AutoSize = true };
         kofi.LinkClicked += (s, e) => Process.Start("https://ko-fi.com/rockonthehill");
@@ -474,9 +478,10 @@ class LauncherForm : Form
         globalPlugins.Location = new Point(12, 94);
         rtSteam.Location = new Point(12, 122);
         rtVdxr.Location = new Point(12, 144);
-        var hint = new Label { Text = "Select VDXR as the OpenXR runtime in the Virtual Desktop Streamer settings.", Location = new Point(30, 165), AutoSize = true, ForeColor = Color.Gray };
+        var hint = new Label { Text = "Select VDXR as the OpenXR runtime in the Virtual Desktop Streamer settings.", Location = new Point(30, 167), AutoSize = true, ForeColor = Color.Gray };
         Controls.AddRange(new Control[] { lbl1, folder, browse, windowed, globalPlugins, rtSteam, rtVdxr, hint, start, note, kofi });
         AcceptButton = start;
+        ResumeLayout(false);
 
         var cfg = Launcher.LoadSettings();
         string v;
