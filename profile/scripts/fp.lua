@@ -545,6 +545,10 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
                     grab_mid = { x = ex, y = ey, z = ez }
                     ex, ey, ez = ex + gf.x * GRAB_EYE_FWD, ey + gf.y * GRAB_EYE_FWD, ez + gf.z * GRAB_EYE_FWD
                 end
+                -- a reading that is NaN or far from the capsule (a pose glitch / mesh swap) is not the head: the last good eye stays
+                if ex ~= ex or ey ~= ey or ez ~= ez or (ex - base.x) ^ 2 + (ey - base.y) ^ 2 + (ez - base.z) ^ 2 > 150 ^ 2 then
+                    if grab_eye then ex, ey, ez = grab_eye.x, grab_eye.y, grab_eye.z else ex, ey, ez = base.x, base.y, base.z + 60 end
+                end
                 if grab_eye then
                     -- (each step also limited to GRAB_EYE_STEP cm: the animation's 33 cm jumps are spread over a few frames)
                     local dx, dy, dz = (ex - grab_eye.x) * a, (ey - grab_eye.y) * a, (ez - grab_eye.z) * a
@@ -666,6 +670,7 @@ uevr.sdk.callbacks.on_post_calculate_stereo_view_offset(function(device, view_in
     -- grabbed by a Locust: the view tilts up with his face (grab_pitch, worked out in the early callback; the early callback's own
     -- pitch is replaced by the headset's, so it is added here, to the final rotation)
     if (grab_pitch or 0) ~= 0 and not CINEMATIC and not VEHICLE then rotation.x = math.max(-89, math.min(89, rotation.x + grab_pitch)) end
+    if view_index == 0 then FP_FINAL = { x = position.x, y = position.y, z = position.z, p = rotation.x, yw = rotation.y } end -- (debug: the final view)
     if VEHICLE and turret_view.pawn ~= nil and not TURRET_VIEW_DEV_OFF then pcall(turret_final, view_index, world_to_meters, position, rotation) return end
     -- ladder: the game's body is fixed on the ladder, so a physical step since the last recenter showed as the view off
     -- the neck. Take the headset's HORIZONTAL offset from the standing origin back out (the way UEVR added it: turned by
