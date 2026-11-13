@@ -266,6 +266,16 @@ uevr.sdk.callbacks.on_early_calculate_stereo_view_offset(function(device, view_i
     end
     -- chainsaw running: the game's camera swings after Marcus' body; the view keeps the held aim (weapon.lua)
     if saw_yaw ~= nil and not CINEMATIC then rotation.y = saw_yaw end
+    -- grabbed by a Locust: the game turns Marcus (and the camera) ~65 deg towards it; the control rotation is left alone (weapon.lua),
+    -- the VIEW is held at the yaw from before the grab (GRAB_YAW; after it weapon.lua puts the control yaw back, GRAB_TAIL)
+    if view_index == 0 then
+        local now = os.clock()
+        local dt = grab_yaw_t and math.min(now - grab_yaw_t, 0.1) or 0
+        grab_yaw_t = now
+        local hy = (GRAB and GRAB_YAW) or (GRAB_TAIL and GRAB_TAIL.yaw)
+        if hy ~= nil and not CINEMATIC then grab_yaw_off = (hy - rotation.y + 180) % 360 - 180 else grab_yaw_off = nil end
+    end
+    if grab_yaw_off ~= nil then rotation.y = rotation.y + grab_yaw_off end
     -- grabbed by a Locust (weapon.lua GRAB): it throws Marcus on his back - the view tilts up with his face (the pitch of
     -- the animated eyes against what it was before), eased in and out and limited per frame; the headset turns on top of it
     if view_index == 0 then

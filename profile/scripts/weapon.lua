@@ -1281,6 +1281,9 @@ do
 end
 -- st = { last = last good position }. Outside the window (active false) it only follows. Returns the position to put the pawn
 -- back to and why ("jump" / "speed"), or nil.
+-- ForceWalkingMovement (not a Ladder tag) does not open the guard right after a cutscene (its placement is a real jump, 3663 cm
+-- seen) nor while a Locust has him (GRAB)
+function LADDER_FW_IGNORED(now, cut_end, grab) return grab == true or now - (cut_end or -10) < 1.0 end
 function LADDER_GUARD_DECIDE(st, c, vel, active)
     local last = st.last
     if active and last ~= nil and last.z ~= 0 then
@@ -1321,6 +1324,7 @@ do
                     if n:find("ForceWalkingMovement") then fw = true names = names .. n .. ";" end
                 end
             end)
+            if fw and not lad and LADDER_FW_IGNORED(clock, CUTSCENE_END_T, GRAB) then fw = false end
             if lad then win_until = clock + LADDER_GUARD_AFTER elseif fw then win_until = math.max(win_until, clock + 0.2) end
             local active = lad or fw or clock < win_until
             local vel = nil
@@ -1567,6 +1571,7 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     if cine ~= (CINEMATIC or false) then
         CINEMATIC = cine
         log(cine and "cutscene: game camera" or "cutscene over: first person")
+        if not cine then CUTSCENE_END_T = clock end -- (the ladder guard ignores ForceWalkingMovement for a second: the end-of-cutscene placement)
         -- cutscene: the view turns only with the head (the right controller's aim and the stick do not turn its
         -- camera). A turret keeps the controller aim and the stick: that is how it is aimed.
         if cine then
@@ -1602,20 +1607,30 @@ uevr.sdk.callbacks.on_pre_engine_tick(function(engine, delta)
     pcall(function()
         local pc = api:get_player_controller(0)
         local r = pc:GetControlRotation()
-        -- grabbed by a Locust: the game turns the control rotation towards it (65 deg in 0.3 s) - held at the yaw from just
-        -- before (the newest one at least 0.25 s old), so the world does not swing; the view turns only with the head
+        -- grabbed by a Locust: the game turns the control rotation (and Marcus) towards it (65 deg in 0.3 s) for the paired
+        -- struggle: it is NOT touched (forcing it back pushed him through walls with the throw-off root motion). Only the yaw
+        -- from just before (the newest one at least 0.25 s old) is remembered: fp.lua holds the VIEW at it (GRAB_YAW)
         if GRAB and not cine and not paused then
             if GRAB_YAW == nil then
                 GRAB_YAW = r.Yaw
                 for _, h in ipairs(GRAB_YAW_RING) do if os.clock() - h.t >= 0.25 then GRAB_YAW = h.yaw end end
             end
-            local dy = (r.Yaw - GRAB_YAW + 180) % 360 - 180
-            if math.abs(dy) > 0.05 then ucall(pc, "SetControlRotation", Vector3d.new(r.Pitch, GRAB_YAW, r.Roll)) end
+            GRAB_TAIL = nil
         else
-            GRAB_YAW = nil
             local nowc = os.clock()
-            GRAB_YAW_RING[#GRAB_YAW_RING + 1] = { t = nowc, yaw = r.Yaw }
-            while #GRAB_YAW_RING > 0 and nowc - GRAB_YAW_RING[1].t > 1.0 do table.remove(GRAB_YAW_RING, 1) end
+            -- grab over: the heading goes back to what it was before the grab (the player's body still faces that way), once, and for
+            -- GRAB_TAIL_S more if the game's re-equip turns it again; fp.lua keeps the view at it meanwhile
+            if GRAB_YAW ~= nil then GRAB_TAIL = { yaw = GRAB_YAW, t = nowc + 0.5 } GRAB_YAW = nil log("grab over: control yaw back to " .. string.format("%.1f (was %.1f)", GRAB_TAIL.yaw, r.Yaw)) GRAB_TAIL.first = true end
+            if GRAB_TAIL ~= nil then
+                if nowc > GRAB_TAIL.t then GRAB_TAIL = nil
+                elseif GRAB_TAIL.first or math.abs((r.Yaw - GRAB_TAIL.yaw + 180) % 360 - 180) > 1 then
+                    GRAB_TAIL.first = nil
+                    ucall(pc, "SetControlRotation", Vector3d.new(r.Pitch, GRAB_TAIL.yaw, r.Roll))
+                end
+            else
+                GRAB_YAW_RING[#GRAB_YAW_RING + 1] = { t = nowc, yaw = r.Yaw }
+                while #GRAB_YAW_RING > 0 and nowc - GRAB_YAW_RING[1].t > 1.0 do table.remove(GRAB_YAW_RING, 1) end
+            end
         end
         if CHAINSAW_HOLD and not cine and not paused then
             saw_yaw = saw_yaw or r.Yaw
