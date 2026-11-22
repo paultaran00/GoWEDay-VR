@@ -116,11 +116,13 @@ On the title screen, hold X (left controller lower button).
 - **RELOAD:** manual, or auto (A (right controller lower button) reloads from your spare ammo, no magazines by hand).
 - **HUD SIZE:** small (default), medium or large. Small keeps the whole HUD, objectives included, in view; large makes the text bigger.
 - **AMMO COUNTER:** on (default) shows the game's ammo panel (magazine and total), off hides it.
+- **RHI THREAD:** off (default) runs the engine's RHI work on the render thread, which stops the whole view shaking when you turn your head. On is the game's normal threading.
 - **UNLOCK ALL SIGHTS:** makes every sight available at the supply cache (campaign only; press twice to confirm; lasts until you restart the game).
 - **BUTTON MAPPING:** click an action, it shows WAITING FOR INPUT, then press the button you want. If that button was already used, the two actions swap. Press SPACE on the keyboard to set an action to NONE. RESET TO DEFAULTS brings the original layout back.
   - **STICKS:** NOT SWAPPED = walk with the left stick, turn with the right; SWAPPED = the other way round. Each stick press moves with its stick. Changing PRIMARY HAND sets the usual one for that hand (left hand: SWAPPED), then you can change it.
 
 ### If something looks off
+- **Whole view shakes when you turn your head:** check that **RHI THREAD** in VR SETTINGS is **OFF**.
 - **View behind your head, or too high or low:** stand straight and recenter your headset. In UEVR's menu (Insert key) there's also **Set Standing Height**.
 - **UEVR menu:** the **Insert** key opens it (advanced).
 
